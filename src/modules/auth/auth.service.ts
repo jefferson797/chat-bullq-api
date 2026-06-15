@@ -3,6 +3,7 @@ import {
   UnauthorizedException,
   ConflictException,
   BadRequestException,
+  ForbiddenException,
   Logger,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
@@ -32,6 +33,16 @@ export class AuthService {
 
     if (existing) {
       throw new ConflictException('Email already registered');
+    }
+
+    // Cadastro aberto (criar workspace novo sem convite) é DESABILITADO por
+    // padrão — só quem tem convite válido entra. Para reabrir (ex: bootstrap
+    // do primeiro usuário), setar ALLOW_OPEN_SIGNUP=true. Bloqueia inclusive
+    // chamadas diretas à API, não só a UI.
+    if (!dto.inviteToken && process.env.ALLOW_OPEN_SIGNUP !== 'true') {
+      throw new ForbiddenException(
+        'Cadastro aberto está desabilitado. Solicite um convite ao administrador.',
+      );
     }
 
     const hashedPassword = await bcrypt.hash(dto.password, BCRYPT_ROUNDS);
