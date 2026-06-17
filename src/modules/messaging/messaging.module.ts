@@ -4,6 +4,7 @@ import { ChannelHubModule } from '../channel-hub/channel-hub.module';
 import { RatingsModule } from '../ratings/ratings.module';
 import { AiAgentsModule } from '../ai-agents/ai-agents.module';
 import { WatchdogModule } from '../routing/watchdog/watchdog.module';
+import { AutoRepliesModule } from '../auto-replies/auto-replies.module';
 import { IdempotencyService } from './pipeline/idempotency.service';
 import { ContactResolverService } from './pipeline/contact-resolver.service';
 import { ConversationResolverService } from './pipeline/conversation-resolver.service';
@@ -35,6 +36,7 @@ import { ContactsRepository } from './contacts/contacts.repository';
     RatingsModule,
     AiAgentsModule,
     WatchdogModule,
+    AutoRepliesModule,
   ],
   controllers: [ConversationsController, MessagesController, ContactsController],
   providers: [

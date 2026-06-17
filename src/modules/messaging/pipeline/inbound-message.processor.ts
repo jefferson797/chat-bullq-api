@@ -15,6 +15,7 @@ import { AiAgentRunnerService } from '../../ai-agents/runner/agent-runner.servic
 import { TranscriptionService } from '../messages/transcription.service';
 import { OutboxService } from '../../automations/outbox/outbox.service';
 import { WatchdogService } from '../../routing/watchdog/watchdog.service';
+import { AutoRepliesService } from '../../auto-replies/auto-replies.service';
 import {
   AutomationTrigger,
   ChannelType,
@@ -96,6 +97,7 @@ export class InboundMessageProcessor extends WorkerHost {
     private readonly transcription: TranscriptionService,
     private readonly outbox: OutboxService,
     private readonly watchdog: WatchdogService,
+    private readonly autoReplies: AutoRepliesService,
     @InjectQueue('chatbot-processor') private readonly chatbotQueue: Queue,
   ) {
     super();
@@ -317,6 +319,9 @@ export class InboundMessageProcessor extends WorkerHost {
               );
             }
           }
+          // Mensagens automáticas (saudação / almoço / fora de expediente).
+          // O próprio serviço ignora quando a IA está ativa pro canal.
+          await this.autoReplies.maybeSend(conversationId, organizationId);
           await this.tryAiAgent(conversationId, savedMessage.id);
         };
         dispatch().catch((err) =>
