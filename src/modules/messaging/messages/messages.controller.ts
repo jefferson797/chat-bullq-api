@@ -18,6 +18,7 @@ import { TranscriptionService } from './transcription.service';
 import { UploadsService } from './uploads.service';
 import { MediaResolverService } from './media-resolver.service';
 import { SendMessageDto } from './dto/send-message.dto';
+import { ForwardMessageDto } from './dto/forward-message.dto';
 import { JwtAuthGuard, OrgGuard, RolesGuard } from '../../../common/guards';
 import {
   CurrentUser,
@@ -47,6 +48,18 @@ export class MessagesController {
     @CurrentChannelAccess() access: ChannelAccess,
   ) {
     return this.service.send(dto, userId, orgId, access);
+  }
+
+  @Post(':id/forward')
+  @ApiOperation({ summary: 'Forward a message (text/media) to another conversation' })
+  forward(
+    @Param('id') id: string,
+    @Body() dto: ForwardMessageDto,
+    @CurrentUser('id') userId: string,
+    @CurrentOrg('id') orgId: string,
+    @CurrentChannelAccess() access: ChannelAccess,
+  ) {
+    return this.service.forward(id, dto.conversationId, userId, orgId, access);
   }
 
   @Post('uploads/audio')

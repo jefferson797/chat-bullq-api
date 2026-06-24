@@ -14,6 +14,7 @@ import {
 } from '@prisma/client';
 import { MessagesRepository } from './messages.repository';
 import { SendMessageDto } from './dto/send-message.dto';
+import { MediaResolverService } from './media-resolver.service';
 import { PrismaService } from '../../../database/prisma.service';
 import { RealtimeGateway } from '../../realtime/realtime.gateway';
 import {
@@ -34,6 +35,7 @@ export class MessagesService {
     private readonly channelAccess: ChannelAccessService,
     private readonly watchdog: WatchdogService,
     private readonly adapterRegistry: ChannelAdapterRegistry,
+    private readonly mediaResolver: MediaResolverService,
     @InjectQueue('outbound-messages') private readonly outboundQueue: Queue,
   ) {}
 
@@ -307,6 +309,88 @@ export class MessagesService {
     );
 
     return message;
+  }
+
+  /**
+   * Encaminha uma mensagem existente (texto ou mídia) para outra conversa,
+   * igual ao "Encaminhar" do WhatsApp. Reaproveita todo o fluxo de `send`:
+   * monta um SendMessageDto a partir do conteúdo da mensagem-origem e despacha
+   * pra conversa de destino.
+   *
+   * Para mídias, resolvemos a URL via MediaResolverService antes de reenviar.
+   * Isso garante que o provider receba uma URL estável (nossa /uploads
+   * re-hospedada) em vez de um link do Zappfy que pode ter expirado — sem
+   * isso, encaminhar uma imagem antiga mandaria um 404.
+   */
+  async forward(
+    sourceMessageId: string,
+    targetConversationId: string,
+    senderId: string,
+    organizationId: string,
+    access: ChannelAccess = 'ALL',
+  ) {
+    const source = await this.prisma.message.findFirst({
+      where: { id: sourceMessageId },
+      include: { conversation: { select: { organizationId: true, channelId: true } } },
+    });
+    if (!source || !source.conversation) {
+      throw new NotFoundException('Mensagem de origem não encontrada');
+    }
+    if (source.conversation.organizationId !== organizationId) {
+      throw new ForbiddenException();
+    }
+    // Acesso ao canal de ORIGEM — só encaminha quem pode ver a mensagem.
+    this.channelAccess.assertChannelAccess(access, source.conversation.channelId);
+
+    const type = source.type as MessageContentType;
+    const sourceContent = (source.content ?? {}) as Record<string, any>;
+
+    // Tipos que não fazem sentido encaminhar (ou que não temos como reenviar
+    // de forma confiável). Mantém o comportamento previsível.
+    const MEDIA_TYPES: MessageContentType[] = [
+      MessageContentType.IMAGE,
+      MessageContentType.VIDEO,
+      MessageContentType.AUDIO,
+      MessageContentType.DOCUMENT,
+      MessageContentType.STICKER,
+    ];
+
+    let content: Record<string, any>;
+    if (type === MessageContentType.TEXT) {
+      const text = sourceContent.text;
+      if (!text || typeof text !== 'string') {
+        throw new ForbiddenException('Mensagem de texto vazia, nada a encaminhar');
+      }
+      content = { text };
+    } else if (MEDIA_TYPES.includes(type)) {
+      // Resolve (e re-hospeda se preciso) a mídia da mensagem-origem.
+      const resolved = await this.mediaResolver.resolve(
+        sourceMessageId,
+        organizationId,
+        access,
+      );
+      if (!resolved?.url) {
+        throw new ForbiddenException('Mídia indisponível para encaminhar');
+      }
+      content = {
+        mediaUrl: resolved.url,
+        mimeType: resolved.mimeType ?? sourceContent.mimeType,
+        // Caption/filename originais são reaproveitados quando existem.
+        caption: typeof sourceContent.caption === 'string' ? sourceContent.caption : undefined,
+        fileName: typeof sourceContent.fileName === 'string' ? sourceContent.fileName : undefined,
+      };
+    } else {
+      throw new ForbiddenException(
+        `Tipo de mensagem não suportado para encaminhar: ${type}`,
+      );
+    }
+
+    const dto: SendMessageDto = {
+      conversationId: targetConversationId,
+      type,
+      content,
+    };
+    return this.send(dto, senderId, organizationId, access);
   }
 
   /**
