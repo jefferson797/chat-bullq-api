@@ -17,6 +17,7 @@ import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { RatingsModule } from './modules/ratings/ratings.module';
 import { ApiKeysModule } from './modules/api-keys/api-keys.module';
 import { AutoRepliesModule } from './modules/auto-replies/auto-replies.module';
+import { DiskMonitorModule } from './modules/disk-monitor/disk-monitor.module';
 import { PublicApiModule } from './modules/public-api/public-api.module';
 import { ChannelAccessModule } from './modules/iam/channel-access/channel-access.module';
 import { AiAgentsModule } from './modules/ai-agents/ai-agents.module';
@@ -61,6 +62,7 @@ import redisConfig from './config/redis.config';
     RatingsModule,
     ApiKeysModule,
     AutoRepliesModule,
+    DiskMonitorModule,
     PublicApiModule,
     AiAgentsModule,
     InboxViewsModule,
