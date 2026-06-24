@@ -32,7 +32,7 @@ export class ZappfySyncAdapter implements HistorySyncPort {
     return {
       supportsHistoryImport: true,
       supportsDeltaSync: true,
-      defaultLookbackDays: 30,
+      defaultLookbackDays: 180,
       maxLookbackDays: 365,
     };
   }
