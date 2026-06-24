@@ -28,6 +28,15 @@ async function bootstrap() {
     config.get<string>('UPLOADS_DIR') || path.join(process.cwd(), 'uploads'),
   );
   if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+  // CORS precisa vir ANTES do static das uploads: o static usa
+  // `fallthrough:false` e encerra a request, então qualquer middleware
+  // registrado depois (incluindo o enableCors) nunca roda pras respostas de
+  // arquivo. Sem o header CORS, o front não consegue baixar o arquivo via
+  // fetch/blob (download direto) — só conseguiria abrir em aba nova.
+  app.enableCors({
+    origin: config.get<string>('CORS_ORIGIN', 'http://localhost:3000'),
+    credentials: true,
+  });
   app.use(
     '/api/v1/uploads',
     express.static(uploadsDir, {
@@ -36,10 +45,6 @@ async function bootstrap() {
       index: false,
     }),
   );
-  app.enableCors({
-    origin: config.get<string>('CORS_ORIGIN', 'http://localhost:3000'),
-    credentials: true,
-  });
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
