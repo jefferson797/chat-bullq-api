@@ -32,10 +32,11 @@ export class UploadsService {
   // transcribable without chunking.
   static readonly MAX_AUDIO_BYTES = 25 * 1024 * 1024;
 
-  // 64MB upper bound for any inbound media we mirror. WhatsApp Cloud caps
-  // documents at 100MB but most chat content is well under this — bigger
-  // files we'd want to stream rather than buffer in memory anyway.
-  static readonly MAX_INBOUND_BYTES = 64 * 1024 * 1024;
+  // 100MB upper bound for any inbound media we mirror — bate com o teto de
+  // documento do WhatsApp Cloud, então aceitamos tudo que o provider entrega
+  // (antes 64MB barrava documentos grandes, que sobravam só com o link
+  // temporário do provider e "quebravam" ao expirar).
+  static readonly MAX_INBOUND_BYTES = 100 * 1024 * 1024;
 
   private static readonly ALLOWED_AUDIO_MIME = new Set([
     'audio/mpeg',
