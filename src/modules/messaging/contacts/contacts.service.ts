@@ -28,21 +28,28 @@ export class ContactsService {
 
   async update(id: string, organizationId: string, dto: UpdateContactDto) {
     const existing = await this.findOne(id, organizationId);
-    const updated = await this.repository.update(id, dto);
+
+    const data: Record<string, unknown> = { ...dto };
+    // Compõe o nome de exibição a partir de nome + sobrenome (quando informados),
+    // pra a conversa mostrar o nome formal e o ERP receber o nome completo.
+    if (dto.firstName !== undefined || dto.lastName !== undefined) {
+      const first = (dto.firstName ?? existing.firstName ?? '').trim();
+      const last = (dto.lastName ?? existing.lastName ?? '').trim();
+      const composed = `${first} ${last}`.trim();
+      if (composed) data.name = composed;
+    }
+
+    const updated = await this.repository.update(id, data);
 
     // Propaga o rename pros cards do CRM que espelhavam o nome antigo do
     // contato (o título do card é um snapshot na criação). Só toca nos
     // cards cujo título == nome antigo — títulos personalizados ficam intactos.
-    if (
-      typeof dto.name === 'string' &&
-      existing.name &&
-      dto.name.trim() &&
-      dto.name.trim() !== existing.name
-    ) {
+    const newName = typeof data.name === 'string' ? data.name.trim() : '';
+    if (newName && existing.name && newName !== existing.name) {
       await this.prisma.card
         .updateMany({
           where: { contactId: id, title: existing.name },
-          data: { title: dto.name.trim() },
+          data: { title: newName },
         })
         .catch(() => undefined);
     }

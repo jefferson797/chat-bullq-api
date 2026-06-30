@@ -366,6 +366,9 @@ model Contact {
   id             String    @id @default(cuid())
   organizationId String    @map("organization_id")
   name           String?
+  firstName      String?   @map("first_name")
+  lastName       String?   @map("last_name")
+  company        String?
   phone          String?
   email          String?
   avatarUrl      String?   @map("avatar_url")

@@ -36,7 +36,7 @@ export class PublicContactsController {
     }
     const contacts = await this.prisma.contact.findMany({
       where,
-      select: { id: true, name: true, phone: true, email: true },
+      select: { id: true, name: true, firstName: true, lastName: true, company: true, phone: true, email: true },
       orderBy: { updatedAt: 'desc' },
       take,
     });

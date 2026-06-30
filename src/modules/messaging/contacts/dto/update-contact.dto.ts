@@ -3,6 +3,9 @@ import { ApiPropertyOptional } from '@nestjs/swagger';
 
 export class UpdateContactDto {
   @ApiPropertyOptional() @IsOptional() @IsString() name?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() firstName?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() lastName?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() company?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() phone?: string;
   @ApiPropertyOptional() @IsOptional() @IsEmail() email?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() notes?: string;
