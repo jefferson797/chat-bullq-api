@@ -33,6 +33,20 @@ export class PublicContactsController {
         { phone: { contains: search } },
         { email: { contains: search, mode: 'insensitive' } },
       ];
+      // Telefones são guardados como chegam do provider — às vezes com máscara
+      // ("+55 11 98641-8358"). Busca numérica compara só dígitos dos dois lados,
+      // senão "86418358" não acha "8641-8358".
+      const digits = search.replace(/\D/g, '');
+      if (digits.length >= 4) {
+        const rows = await this.prisma.$queryRaw<{ id: string }[]>`
+          SELECT id FROM contacts
+          WHERE organization_id = ${orgId}
+            AND deleted_at IS NULL
+            AND regexp_replace(coalesce(phone, ''), '\\D', '', 'g') LIKE ${'%' + digits + '%'}
+          LIMIT ${take}
+        `;
+        if (rows.length) where.OR.push({ id: { in: rows.map((r) => r.id) } });
+      }
     }
     const contacts = await this.prisma.contact.findMany({
       where,
