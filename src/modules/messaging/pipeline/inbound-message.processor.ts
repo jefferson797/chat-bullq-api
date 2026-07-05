@@ -23,6 +23,7 @@ import {
   MessageContentType as PrismaContentType,
   MessageStatus,
   ConversationStatus,
+  AgentStatus,
   Prisma,
 } from '@prisma/client';
 
@@ -82,6 +83,9 @@ export class InboundMessageProcessor extends WorkerHost {
    *  schedule one more debounced run if the customer kept typing. */
   private readonly running = new Set<string>();
   private readonly followupNeeded = new Set<string>();
+
+  /** Cursor de rodízio (round-robin) por org:setor, pro auto-assign. */
+  private readonly rrCursor = new Map<string, number>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -294,6 +298,14 @@ export class InboundMessageProcessor extends WorkerHost {
             `Watchdog scheduleCheck failed for conv ${conversationId}: ${err?.message ?? err}`,
           ),
         );
+        // Atribuição automática: manda o lead novo pra um vendedor (rodízio),
+        // se ninguém pegou e a IA/bot não estão cuidando. Fire-and-forget.
+        this.maybeAutoAssign(conversationId, organizationId, channelId).catch(
+          (err) =>
+            this.logger.warn(
+              `auto-assign failed conv ${conversationId}: ${err?.message ?? err}`,
+            ),
+        );
       } else if (isEcho) {
         // Echo de msg nossa que finalmente voltou — cancela timer existente
         // (pode ter sido enviada por outro path que não passou pelo cancel).
@@ -351,6 +363,88 @@ export class InboundMessageProcessor extends WorkerHost {
         .catch(() => undefined);
       throw err;
     }
+  }
+
+  /**
+   * Auto-atribui um lead novo a um vendedor por rodízio, quando:
+   *  - a conversa está SEM dono e não é grupo,
+   *  - não está sendo tratada por bot (status BOT),
+   *  - a IA não está ativa pro canal (senão ela responde),
+   *  - existe pelo menos um vendedor ativo no setor padrão.
+   * Atribui só o vendedor (NÃO seta setor — triagem de setor é manual).
+   */
+  private async maybeAutoAssign(
+    conversationId: string,
+    organizationId: string,
+    channelId: string,
+  ): Promise<void> {
+    const [org, channel, conv] = await Promise.all([
+      this.prisma.organization.findUnique({
+        where: { id: organizationId },
+        select: { aiEnabled: true },
+      }),
+      this.prisma.channel.findUnique({
+        where: { id: channelId },
+        select: { aiEnabled: true },
+      }),
+      this.prisma.conversation.findUnique({
+        where: { id: conversationId },
+        select: { assignedToId: true, status: true, isGroup: true },
+      }),
+    ]);
+    if (!conv || conv.assignedToId || conv.isGroup) return;
+    if (conv.status === ConversationStatus.BOT) return;
+    const aiOn =
+      channel?.aiEnabled === true ||
+      (channel?.aiEnabled !== false && org?.aiEnabled === true);
+    if (aiOn) return;
+
+    // Setor padrão = pool de roteamento. (Supervisores não devem estar nele.)
+    const department = await this.prisma.department.findFirst({
+      where: { organizationId, deletedAt: null },
+      orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
+      select: { id: true },
+    });
+    if (!department) return;
+
+    const where = (onlineOnly: boolean) => ({
+      departmentId: department.id,
+      isActive: true,
+      userOrganization: {
+        organizationId,
+        ...(onlineOnly ? { agentStatus: AgentStatus.ONLINE } : {}),
+      },
+    });
+    let agents = await this.prisma.departmentAgent.findMany({
+      where: where(true),
+      include: { userOrganization: { select: { userId: true } } },
+      orderBy: { id: 'asc' },
+    });
+    if (agents.length === 0) {
+      agents = await this.prisma.departmentAgent.findMany({
+        where: where(false),
+        include: { userOrganization: { select: { userId: true } } },
+        orderBy: { id: 'asc' },
+      });
+    }
+    if (agents.length === 0) return;
+
+    const key = `${organizationId}:${department.id}`;
+    const idx = this.rrCursor.get(key) ?? 0;
+    const pick = agents[idx % agents.length];
+    this.rrCursor.set(key, idx + 1);
+
+    await this.prisma.conversation.update({
+      where: { id: conversationId },
+      data: { assignedToId: pick.userOrganization.userId },
+    });
+    this.realtimeGateway.emitToChannel(channelId, 'conversation:updated', {
+      conversationId,
+      assignedToId: pick.userOrganization.userId,
+    });
+    this.logger.log(
+      `auto_assigned conv=${conversationId} -> user=${pick.userOrganization.userId}`,
+    );
   }
 
   /**
