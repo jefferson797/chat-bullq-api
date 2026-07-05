@@ -63,6 +63,7 @@ export class ConversationsService {
       kind?: 'INDIVIDUAL' | 'GROUP';
       tagIds?: string[];
       assignedToId?: string;
+      unassignedOnly?: boolean;
       search?: string;
       archived?: 'exclude' | 'only' | 'any';
       unreadOnly?: boolean;
@@ -88,6 +89,7 @@ export class ConversationsService {
       kind: filters.kind,
       tagIds: filters.tagIds,
       assignedToId: filters.assignedToId,
+      unassignedOnly: filters.unassignedOnly,
       search: filters.search,
       accessibleChannelIds: access === 'ALL' ? undefined : [...access],
       archived: filters.archived,

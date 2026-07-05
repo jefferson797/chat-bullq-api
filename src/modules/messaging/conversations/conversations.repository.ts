@@ -19,6 +19,8 @@ export interface InboxFilters {
   /** Tag ids applied to the conversation OR its contact. ANY match. */
   tagIds?: string[];
   assignedToId?: string;
+  /** Só conversas SEM dono (assignedToId = null) — aba "Sem dono"/fila. */
+  unassignedOnly?: boolean;
   search?: string;
   accessibleChannelIds?: string[];
   /**
@@ -126,6 +128,7 @@ export class ConversationsRepository {
       ];
     }
     if (filters.assignedToId) where.assignedToId = filters.assignedToId;
+    else if (filters.unassignedOnly) where.assignedToId = null;
     if (filters.stuckOnly) where.isStuck = true;
     if (filters.search) {
       where.OR = [
