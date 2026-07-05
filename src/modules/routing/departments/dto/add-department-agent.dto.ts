@@ -1,8 +1,9 @@
-import { IsUUID } from 'class-validator';
+import { IsString, MinLength } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class AddDepartmentAgentDto {
-  @ApiProperty({ description: 'User id of the agent to add to the department' })
-  @IsUUID()
+  @ApiProperty({ description: 'User id (cuid) of the agent to add to the department' })
+  @IsString()
+  @MinLength(1)
   userId: string;
 }
