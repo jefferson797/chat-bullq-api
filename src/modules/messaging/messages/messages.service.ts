@@ -22,6 +22,7 @@ import {
   ChannelAccessService,
 } from '../../iam/channel-access/channel-access.service';
 import { WatchdogService } from '../../routing/watchdog/watchdog.service';
+import { SlaService } from '../../routing/sla/sla.service';
 import { ChannelAdapterRegistry } from '../../channel-hub/channel-adapter.registry';
 
 @Injectable()
@@ -34,6 +35,7 @@ export class MessagesService {
     private readonly realtimeGateway: RealtimeGateway,
     private readonly channelAccess: ChannelAccessService,
     private readonly watchdog: WatchdogService,
+    private readonly sla: SlaService,
     private readonly adapterRegistry: ChannelAdapterRegistry,
     private readonly mediaResolver: MediaResolverService,
     @InjectQueue('outbound-messages') private readonly outboundQueue: Queue,
@@ -189,6 +191,9 @@ export class MessagesService {
     // zera o contador de tentativas. Se a IA estava paralisada e quem
     // resolveu foi a pessoa, conversa não deve aparecer como "presa".
     this.watchdog.cancelCheck(conversation.id).catch(() => undefined);
+    // Humano respondeu → cumpriu o SLA de 1ª resposta: cancela esse timer.
+    // (O de resolução segue correndo até o encerramento da conversa.)
+    this.sla.cancelFirstResponseTimer(conversation.id).catch(() => undefined);
 
     // Replying = reading. The sender obviously saw the inbound stream
     // before typing — bump their lastReadAt so the unread badge resets

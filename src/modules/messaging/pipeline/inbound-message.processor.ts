@@ -15,6 +15,7 @@ import { AiAgentRunnerService } from '../../ai-agents/runner/agent-runner.servic
 import { TranscriptionService } from '../messages/transcription.service';
 import { OutboxService } from '../../automations/outbox/outbox.service';
 import { WatchdogService } from '../../routing/watchdog/watchdog.service';
+import { SlaService } from '../../routing/sla/sla.service';
 import { AutoRepliesService } from '../../auto-replies/auto-replies.service';
 import {
   AutomationTrigger,
@@ -101,6 +102,7 @@ export class InboundMessageProcessor extends WorkerHost {
     private readonly transcription: TranscriptionService,
     private readonly outbox: OutboxService,
     private readonly watchdog: WatchdogService,
+    private readonly sla: SlaService,
     private readonly autoReplies: AutoRepliesService,
     @InjectQueue('chatbot-processor') private readonly chatbotQueue: Queue,
   ) {
@@ -296,6 +298,19 @@ export class InboundMessageProcessor extends WorkerHost {
         this.watchdog.scheduleCheck(conversationId).catch((err) =>
           this.logger.warn(
             `Watchdog scheduleCheck failed for conv ${conversationId}: ${err?.message ?? err}`,
+          ),
+        );
+        // SLA: arma os timers de 1ª resposta e resolução se o setor da
+        // conversa tiver SLA configurado. Auto-guardado no service (no-op
+        // sem SLA / já respondida / fechada) e idempotente pelo jobId.
+        this.sla.scheduleFirstResponseTimer(conversationId, organizationId).catch((err) =>
+          this.logger.warn(
+            `SLA first-response schedule failed for conv ${conversationId}: ${err?.message ?? err}`,
+          ),
+        );
+        this.sla.scheduleResolutionTimer(conversationId, organizationId).catch((err) =>
+          this.logger.warn(
+            `SLA resolution schedule failed for conv ${conversationId}: ${err?.message ?? err}`,
           ),
         );
         // Atribuição automática: manda o lead novo pra um vendedor (rodízio),

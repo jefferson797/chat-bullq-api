@@ -3,6 +3,7 @@ import { AutomationTrigger, ConversationStatus } from '@prisma/client';
 import { PrismaService } from '../../../database/prisma.service';
 import { RatingsService } from '../../ratings/ratings.service';
 import { OutboxService } from '../../automations/outbox/outbox.service';
+import { SlaService } from '../../routing/sla/sla.service';
 
 type Transition = {
   from: ConversationStatus;
@@ -29,6 +30,7 @@ export class ConversationFsmService {
     private readonly prisma: PrismaService,
     private readonly ratings: RatingsService,
     private readonly outbox: OutboxService,
+    private readonly sla: SlaService,
   ) {}
 
   canTransition(from: ConversationStatus, to: ConversationStatus): boolean {
@@ -105,6 +107,9 @@ export class ConversationFsmService {
       this.ratings.requestRating(conversationId).catch((err) => {
         this.logger.warn(`Failed to request rating for ${conversationId}: ${err?.message}`);
       });
+      // Conversa encerrada → cancela qualquer timer de SLA pendente (1ª
+      // resposta e resolução) pra não notificar violação de conversa já fechada.
+      this.sla.cancelTimers(conversationId).catch(() => undefined);
     }
   }
 

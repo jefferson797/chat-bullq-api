@@ -12,6 +12,11 @@ import { UpdateDepartmentDto } from './dto/update-department.dto';
 export class DepartmentsService {
   constructor(private readonly repository: DepartmentsRepository) {}
 
+  /** 0/negativo/undefined → null (sem SLA); >0 → o valor em minutos. */
+  private normalizeSla(v?: number): number | null {
+    return v && v > 0 ? v : null;
+  }
+
   async create(orgId: string, dto: CreateDepartmentDto) {
     if (dto.isDefault) {
       await this.repository.clearDefaultForOrg(orgId);
@@ -21,6 +26,8 @@ export class DepartmentsService {
       description: dto.description,
       distributionRule: dto.distributionRule,
       isDefault: dto.isDefault ?? false,
+      slaFirstResponse: this.normalizeSla(dto.slaFirstResponse),
+      slaResolution: this.normalizeSla(dto.slaResolution),
       organization: { connect: { id: orgId } },
     });
   }
@@ -47,6 +54,8 @@ export class DepartmentsService {
       ...(dto.description !== undefined && { description: dto.description }),
       ...(dto.distributionRule !== undefined && { distributionRule: dto.distributionRule }),
       ...(dto.isDefault !== undefined && { isDefault: dto.isDefault }),
+      ...(dto.slaFirstResponse !== undefined && { slaFirstResponse: this.normalizeSla(dto.slaFirstResponse) }),
+      ...(dto.slaResolution !== undefined && { slaResolution: this.normalizeSla(dto.slaResolution) }),
     });
   }
 

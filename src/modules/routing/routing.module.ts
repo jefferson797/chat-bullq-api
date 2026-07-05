@@ -6,22 +6,19 @@ import { DepartmentsController } from './departments/departments.controller';
 import { DepartmentsService } from './departments/departments.service';
 import { DepartmentsRepository } from './departments/departments.repository';
 import { RouterService } from './router.service';
-import { SlaService } from './sla/sla.service';
-import { SlaTimerProcessor } from './sla/sla-timer.processor';
+import { SlaModule } from './sla/sla.module';
 import { WatchdogModule } from './watchdog/watchdog.module';
 
 @Module({
   imports: [
-    BullModule.registerQueue(
-      { name: 'conversation-router' },
-      { name: 'sla-timers' },
-    ),
+    BullModule.registerQueue({ name: 'conversation-router' }),
     MessagingModule,
     NotificationsModule,
+    SlaModule,
     WatchdogModule,
   ],
   controllers: [DepartmentsController],
-  providers: [DepartmentsRepository, DepartmentsService, RouterService, SlaService, SlaTimerProcessor],
-  exports: [DepartmentsService, DepartmentsRepository, RouterService, SlaService],
+  providers: [DepartmentsRepository, DepartmentsService, RouterService],
+  exports: [DepartmentsService, DepartmentsRepository, RouterService, SlaModule],
 })
 export class RoutingModule {}
