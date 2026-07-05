@@ -6,11 +6,15 @@ import {
   BadRequestException,
   Logger,
 } from '@nestjs/common';
+import * as bcrypt from 'bcrypt';
 import { OrgRole, Prisma } from '@prisma/client';
 import { OrganizationsRepository } from './organizations.repository';
 import { UpdateOrganizationDto } from './dto/update-organization.dto';
 import { InviteMemberDto } from './dto/invite-member.dto';
 import { UpdateMemberRoleDto } from './dto/update-member-role.dto';
+import { UpdateMemberDto } from './dto/update-member.dto';
+
+const BCRYPT_ROUNDS = 12;
 
 @Injectable()
 export class OrganizationsService {
@@ -151,5 +155,58 @@ export class OrganizationsService {
 
     await this.repository.removeMember(membership.id);
     this.logger.log(`Member ${memberId} removed from org ${orgId} by ${actorId}`);
+  }
+
+  /** Edita o membro (nome / ativo). ADMIN não mexe no OWNER. */
+  async updateMember(
+    orgId: string,
+    memberId: string,
+    dto: UpdateMemberDto,
+    actorRole: OrgRole,
+  ) {
+    const membership = await this.repository.findMembership(memberId, orgId);
+    if (!membership) {
+      throw new NotFoundException('Member not found in this organization');
+    }
+    if (membership.role === 'OWNER' && actorRole === 'ADMIN') {
+      throw new ForbiddenException('Only the owner can edit the owner');
+    }
+
+    const data: Prisma.UserUpdateInput = {};
+    if (dto.name !== undefined) data.name = dto.name;
+    if (dto.isActive !== undefined) data.isActive = dto.isActive;
+    if (Object.keys(data).length === 0) {
+      throw new BadRequestException('Nothing to update');
+    }
+
+    const user = await this.repository.updateUser(membership.userId, data);
+    this.logger.log(`Member ${memberId} (user ${membership.userId}) updated in org ${orgId}`);
+    const { password: _pw, ...sanitized } = user;
+    return sanitized;
+  }
+
+  /**
+   * Redefine a senha de um membro (admin não sabe a senha antiga — por isso
+   * NÃO exige a atual, diferente do change-password do próprio usuário).
+   * ADMIN não pode redefinir a senha do OWNER.
+   */
+  async resetMemberPassword(
+    orgId: string,
+    memberId: string,
+    newPassword: string,
+    actorRole: OrgRole,
+  ) {
+    const membership = await this.repository.findMembership(memberId, orgId);
+    if (!membership) {
+      throw new NotFoundException('Member not found in this organization');
+    }
+    if (membership.role === 'OWNER' && actorRole === 'ADMIN') {
+      throw new ForbiddenException('Only the owner can reset the owner password');
+    }
+
+    const hashedPassword = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
+    await this.repository.updateUser(membership.userId, { password: hashedPassword });
+    this.logger.log(`Password reset for member ${memberId} (user ${membership.userId}) in org ${orgId}`);
+    return { ok: true };
   }
 }

@@ -15,6 +15,8 @@ import { OrganizationsService } from './organizations.service';
 import { UpdateOrganizationDto } from './dto/update-organization.dto';
 import { InviteMemberDto } from './dto/invite-member.dto';
 import { UpdateMemberRoleDto } from './dto/update-member-role.dto';
+import { UpdateMemberDto } from './dto/update-member.dto';
+import { ResetMemberPasswordDto } from './dto/reset-member-password.dto';
 import { JwtAuthGuard, OrgGuard, RolesGuard } from '../../common/guards';
 import { CurrentUser, CurrentOrg, Roles, Public } from '../../common/decorators';
 
@@ -89,6 +91,30 @@ export class OrganizationsController {
     @Body() dto: UpdateMemberRoleDto,
   ) {
     return this.service.updateMemberRole(orgId, memberId, dto, actorRole);
+  }
+
+  @Patch('members/:memberId')
+  @Roles(OrgRole.OWNER, OrgRole.ADMIN)
+  @ApiOperation({ summary: 'Edit a member (name / active status)' })
+  updateMember(
+    @CurrentOrg('id') orgId: string,
+    @CurrentOrg('userRole') actorRole: OrgRole,
+    @Param('memberId') memberId: string,
+    @Body() dto: UpdateMemberDto,
+  ) {
+    return this.service.updateMember(orgId, memberId, dto, actorRole);
+  }
+
+  @Post('members/:memberId/reset-password')
+  @Roles(OrgRole.OWNER, OrgRole.ADMIN)
+  @ApiOperation({ summary: 'Reset a member password (admin sets a new one)' })
+  resetMemberPassword(
+    @CurrentOrg('id') orgId: string,
+    @CurrentOrg('userRole') actorRole: OrgRole,
+    @Param('memberId') memberId: string,
+    @Body() dto: ResetMemberPasswordDto,
+  ) {
+    return this.service.resetMemberPassword(orgId, memberId, dto.newPassword, actorRole);
   }
 
   @Delete('members/:memberId')

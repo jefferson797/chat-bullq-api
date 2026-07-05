@@ -73,6 +73,11 @@ export class OrganizationsRepository {
     });
   }
 
+  /** Atualiza campos do próprio usuário (nome, status ativo, senha já hasheada). */
+  async updateUser(userId: string, data: Prisma.UserUpdateInput) {
+    return this.prisma.user.update({ where: { id: userId }, data });
+  }
+
   async findUserByEmail(email: string) {
     return this.prisma.user.findUnique({ where: { email } });
   }
