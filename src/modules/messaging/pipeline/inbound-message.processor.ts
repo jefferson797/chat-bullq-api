@@ -25,6 +25,7 @@ import {
   MessageStatus,
   ConversationStatus,
   AgentStatus,
+  DistributionRule,
   Prisma,
 } from '@prisma/client';
 
@@ -381,12 +382,15 @@ export class InboundMessageProcessor extends WorkerHost {
   }
 
   /**
-   * Auto-atribui um lead novo a um vendedor por rodízio, quando:
+   * Auto-atribui um lead novo a um vendedor do setor padrão, quando:
    *  - a conversa está SEM dono e não é grupo,
    *  - não está sendo tratada por bot (status BOT),
    *  - a IA não está ativa pro canal (senão ela responde),
-   *  - existe pelo menos um vendedor ativo no setor padrão.
-   * Atribui só o vendedor (NÃO seta setor — triagem de setor é manual).
+   *  - existe pelo menos um vendedor ativo no setor padrão,
+   *  - a regra do setor não é MANUAL (aí fica na fila pra pegar).
+   * O vendedor é escolhido pela `distributionRule` do setor: RODÍZIO
+   * (rotação) ou MENOS OCUPADO (menos conversas abertas). Atribui só o
+   * vendedor (NÃO seta setor — triagem de setor é manual).
    */
   private async maybeAutoAssign(
     conversationId: string,
@@ -415,12 +419,16 @@ export class InboundMessageProcessor extends WorkerHost {
     if (aiOn) return;
 
     // Setor padrão = pool de roteamento. (Supervisores não devem estar nele.)
+    // A regra de distribuição do setor decide COMO escolher o vendedor.
     const department = await this.prisma.department.findFirst({
       where: { organizationId, deletedAt: null },
       orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
-      select: { id: true },
+      select: { id: true, distributionRule: true },
     });
     if (!department) return;
+    // MANUAL = ninguém é atribuído automaticamente; fica na fila do setor
+    // pra alguém pegar. (Rodízio e Menos ocupado distribuem sozinhos.)
+    if (department.distributionRule === DistributionRule.MANUAL) return;
 
     const where = (onlineOnly: boolean) => ({
       departmentId: department.id,
@@ -444,10 +452,46 @@ export class InboundMessageProcessor extends WorkerHost {
     }
     if (agents.length === 0) return;
 
+    // Rotação base: cursor por org:setor. Usado direto no RODÍZIO e como
+    // desempate justo no MENOS OCUPADO (evita sempre cair no mesmo quando
+    // a carga empata).
     const key = `${organizationId}:${department.id}`;
-    const idx = this.rrCursor.get(key) ?? 0;
-    const pick = agents[idx % agents.length];
-    this.rrCursor.set(key, idx + 1);
+    const cursor = this.rrCursor.get(key) ?? 0;
+    this.rrCursor.set(key, cursor + 1);
+    const rotated = agents.map((_, i) => agents[(cursor + i) % agents.length]);
+
+    let pick = rotated[0];
+    if (department.distributionRule === DistributionRule.LEAST_BUSY) {
+      // Menos ocupado: conta as conversas ABERTAS de cada candidato e pega
+      // quem tem menos (empate resolvido pela rotação acima).
+      const userIds = rotated.map((a) => a.userOrganization.userId);
+      const counts = await this.prisma.conversation.groupBy({
+        by: ['assignedToId'],
+        where: {
+          organizationId,
+          assignedToId: { in: userIds },
+          deletedAt: null,
+          status: {
+            in: [
+              ConversationStatus.PENDING,
+              ConversationStatus.OPEN,
+              ConversationStatus.WAITING,
+              ConversationStatus.BOT,
+            ],
+          },
+        },
+        _count: { _all: true },
+      });
+      const load = new Map(counts.map((c) => [c.assignedToId, c._count._all]));
+      let best = Infinity;
+      for (const a of rotated) {
+        const c = load.get(a.userOrganization.userId) ?? 0;
+        if (c < best) {
+          best = c;
+          pick = a;
+        }
+      }
+    }
 
     await this.prisma.conversation.update({
       where: { id: conversationId },

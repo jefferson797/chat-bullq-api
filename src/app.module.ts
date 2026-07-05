@@ -25,9 +25,10 @@ import { AiAgentsModule } from './modules/ai-agents/ai-agents.module';
 import { InboxViewsModule } from './modules/inbox-views/inbox-views.module';
 import { PipelinesModule } from './modules/pipelines/pipelines.module';
 import { AutomationsModule } from './modules/automations/automations.module';
-// ProductsModule removido — catálogo agora vive no Trivapp e é consumido
-// via skill HTTP getProductPitch + CatalogSyncService. Tabela `products`
-// fica órfã no DB (cleanup futuro). Não importar aqui.
+// ProductsModule religado (2026-07-05) — catálogo LOCAL por org (CRUD +
+// tela de cadastro). A IA ainda consome o Trivapp via skill getProductPitch;
+// reapontá-la pro catálogo local é um passo separado (integração viva).
+import { ProductsModule } from './modules/products/products.module';
 import redisConfig from './config/redis.config';
 
 @Module({
@@ -69,6 +70,7 @@ import redisConfig from './config/redis.config';
     AiAgentsModule,
     InboxViewsModule,
     PipelinesModule,
+    ProductsModule,
   ],
 })
 export class AppModule {}
