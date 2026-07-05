@@ -21,6 +21,8 @@ export interface InboxFilters {
   assignedToId?: string;
   /** Só conversas SEM dono (assignedToId = null) — aba "Sem dono"/fila. */
   unassignedOnly?: boolean;
+  /** Filtro por setor: um id, ou 'none' para conversas sem setor. */
+  departmentId?: string;
   search?: string;
   accessibleChannelIds?: string[];
   /**
@@ -129,6 +131,9 @@ export class ConversationsRepository {
     }
     if (filters.assignedToId) where.assignedToId = filters.assignedToId;
     else if (filters.unassignedOnly) where.assignedToId = null;
+
+    if (filters.departmentId === 'none') where.departmentId = null;
+    else if (filters.departmentId) where.departmentId = filters.departmentId;
     if (filters.stuckOnly) where.isStuck = true;
     if (filters.search) {
       where.OR = [
@@ -210,6 +215,9 @@ export class ConversationsRepository {
           },
           channel: {
             select: { id: true, type: true, name: true },
+          },
+          department: {
+            select: { id: true, name: true },
           },
           assignedTo: {
             select: { id: true, name: true, avatarUrl: true },

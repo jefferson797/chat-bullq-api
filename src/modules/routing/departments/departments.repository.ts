@@ -14,6 +14,7 @@ export class DepartmentsRepository {
     return this.prisma.department.findMany({
       where: { organizationId, deletedAt: null },
       orderBy: [{ isDefault: 'desc' }, { name: 'asc' }],
+      include: { _count: { select: { agents: true, conversations: true } } },
     });
   }
 

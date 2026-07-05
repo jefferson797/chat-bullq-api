@@ -61,6 +61,12 @@ export class DepartmentsController {
     return this.service.remove(id, orgId);
   }
 
+  @Get(':id/agents')
+  @ApiOperation({ summary: 'List agents of a department' })
+  agents(@Param('id') id: string, @CurrentOrg('id') orgId: string) {
+    return this.service.findAgents(id, orgId);
+  }
+
   @Post(':id/agents')
   @Roles(OrgRole.OWNER, OrgRole.ADMIN)
   @ApiOperation({ summary: 'Add agent to department' })
