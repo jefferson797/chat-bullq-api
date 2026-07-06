@@ -11,8 +11,10 @@ import { PrismaService } from '../../database/prisma.service';
  * Lembrete diário pra equipe de vendas, enviado por WhatsApp (Zappfy)
  * de segunda a sexta no horário configurado.
  *
- * Texto/destinatário/horário ficam abaixo (fixos). Pra mudar o texto é só
- * editar TEXT e redeployar. Desliga com REMINDER_ENABLED=false.
+ * DESTINATÁRIO é configurável via env `REMINDER_NUMBER` (ex: 5511999999999).
+ * Sem `REMINDER_NUMBER` setado, o lembrete NÃO é enviado (desligado por
+ * padrão). Também desliga com `REMINDER_ENABLED=false`. Pra mudar o texto é
+ * só editar TEXT e redeployar.
  *
  * Tick de 5min cobre a janela do horário-alvo (8:50–8:59). Anti-duplicação
  * por dia via flag em memória.
@@ -24,7 +26,6 @@ export class DailyReminderService implements OnModuleInit, OnModuleDestroy {
   private static readonly TICK_MS = 5 * 60 * 1000; // 5min
 
   // ─── Configuração do lembrete ────────────────────────────────────────
-  private static readonly NUMBER = '5511964522654';
   private static readonly TZ = 'America/Sao_Paulo';
   private static readonly HOUR = 8;
   private static readonly MINUTE = 50;
@@ -57,8 +58,15 @@ export class DailyReminderService implements OnModuleInit, OnModuleDestroy {
     if (this.timer) clearInterval(this.timer);
   }
 
+  /** Número destinatário do lembrete (env). Vazio = lembrete desligado. */
+  private reminderNumber(): string {
+    return (this.config.get<string>('REMINDER_NUMBER') ?? '').replace(/\D/g, '');
+  }
+
   private async tick(): Promise<void> {
     if ((this.config.get<string>('REMINDER_ENABLED') ?? 'true') === 'false') return;
+    const number = this.reminderNumber();
+    if (!number) return; // sem destinatário configurado → não envia
     try {
       const { weekday, minuteOfDay, day } = this.localNow();
       if (!DailyReminderService.WEEKDAYS.includes(weekday)) return;
@@ -66,7 +74,7 @@ export class DailyReminderService implements OnModuleInit, OnModuleDestroy {
       if (minuteOfDay < target || minuteOfDay >= target + 10) return;
       if (this.lastSentDay === day) return;
 
-      if (await this.sendWhatsapp(DailyReminderService.NUMBER, DailyReminderService.TEXT)) {
+      if (await this.sendWhatsapp(number, DailyReminderService.TEXT)) {
         this.lastSentDay = day;
         this.logger.log(`daily reminder sent (${day})`);
       }
@@ -107,7 +115,12 @@ export class DailyReminderService implements OnModuleInit, OnModuleDestroy {
 
   /** Envio público pra teste manual, se precisar. */
   async sendNow(): Promise<boolean> {
-    return this.sendWhatsapp(DailyReminderService.NUMBER, DailyReminderService.TEXT);
+    const number = this.reminderNumber();
+    if (!number) {
+      this.logger.warn('daily reminder: REMINDER_NUMBER não configurado — nada enviado');
+      return false;
+    }
+    return this.sendWhatsapp(number, DailyReminderService.TEXT);
   }
 
   private async sendWhatsapp(number: string, text: string): Promise<boolean> {
