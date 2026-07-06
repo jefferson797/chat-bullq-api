@@ -334,30 +334,27 @@ export class AiAgentRunnerService {
             );
           }
 
-          // Sales-prep nudge: agent gathered offer info + purchase status
-          // but never sent a reply — classic "thought-but-didn't-speak"
-          // failure that leaves the customer hanging. Inject one synthetic
-          // user reminder and re-iterate. Bounded by salesNudgeUsed to
-          // avoid loops if the model still refuses.
+          // Nudge "pensou mas não falou": o agente rodou tools (ex.: só
+          // tagConversation, ou as tools de venda) e ia terminar SEM enviar
+          // resposta — deixa o cliente no vácuo. Injeta UM lembrete sintético
+          // e re-itera. Antes só cobria o fluxo de venda; generalizado pra
+          // qualquer caso de NO_ACTION-sem-resposta, senão a IA etiqueta e
+          // cala. Bounded por salesNudgeUsed pra não entrar em loop.
           const calledSalesPrep = [...SALES_PREP_TOOLS].some((t) =>
             toolsCalled.has(t),
           );
           const neverReplied = !toolsCalled.has('replyToConversation');
           const stillNoAction = finalAction === AiFinalAction.NO_ACTION;
-          if (
-            calledSalesPrep &&
-            neverReplied &&
-            stillNoAction &&
-            !salesNudgeUsed
-          ) {
+          if (neverReplied && stillNoAction && !salesNudgeUsed) {
             salesNudgeUsed = true;
             this.logger.warn(
-              `Run ${run.id}: sales-prep tools ran but no replyToConversation — nudging model for one more turn`,
+              `Run ${run.id}: terminaria sem replyToConversation — nudging model for one reply`,
             );
             messages.push({
               role: 'user',
-              content:
-                'Você rodou as tools de preparação (lookupOffering / checkPurchase) mas não chamou replyToConversation. O cliente está esperando. Responda agora com replyToConversation: 1 frase de pitch ligada à dor + preço + link do checkout (vindos do lookupOffering). Não termine este turn sem chamar replyToConversation.',
+              content: calledSalesPrep
+                ? 'Você rodou as tools de preparação (lookupOffering / checkPurchase) mas não chamou replyToConversation. O cliente está esperando. Responda agora com replyToConversation: 1 frase de pitch ligada à dor + preço + link do checkout (vindos do lookupOffering). Não termine este turn sem chamar replyToConversation.'
+                : 'Você ainda NÃO enviou nenhuma resposta ao cliente — ele está esperando. Responda agora chamando replyToConversation com uma mensagem útil e no tom da empresa. Só encerre sem responder se a conversa já foi transferida ou encerrada; caso contrário, SEMPRE responda.',
             });
             continue;
           }
