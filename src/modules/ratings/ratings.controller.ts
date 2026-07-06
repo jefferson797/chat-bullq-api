@@ -11,6 +11,13 @@ export class RatingsController {
   constructor(private readonly service: RatingsService) {}
 
   @Public()
+  @Get('public/:token/branding')
+  @ApiOperation({ summary: 'Get org branding (name + logo) for the public rating page' })
+  getBranding(@Param('token') token: string) {
+    return this.service.getBranding(token);
+  }
+
+  @Public()
   @Post('public/:token')
   @ApiOperation({ summary: 'Submit CSAT rating using a public token (no auth)' })
   submit(@Param('token') token: string, @Body() dto: SubmitRatingDto) {

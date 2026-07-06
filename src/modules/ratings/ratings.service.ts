@@ -144,6 +144,20 @@ export class RatingsService {
     this.logger.log(`CSAT invite queued: msg=${message.id} conv=${conv.id}`);
   }
 
+  /** Marca da empresa pra página pública de avaliação (nome + logo). */
+  async getBranding(token: string) {
+    const rating = await this.prisma.conversationRating.findUnique({
+      where: { token },
+      select: { organizationId: true },
+    });
+    if (!rating) return { orgName: null, logoUrl: null };
+    const org = await this.prisma.organization.findUnique({
+      where: { id: rating.organizationId },
+      select: { name: true, logoUrl: true },
+    });
+    return { orgName: org?.name ?? null, logoUrl: org?.logoUrl ?? null };
+  }
+
   async submitByToken(token: string, score: number, comment?: string) {
     if (!Number.isInteger(score) || score < 1 || score > 5) {
       throw new BadRequestException('Score must be an integer between 1 and 5');

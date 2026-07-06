@@ -8,10 +8,15 @@ import {
   Param,
   Query,
   UseGuards,
+  UseInterceptors,
+  UploadedFile,
+  BadRequestException,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags, ApiOperation } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { ApiBearerAuth, ApiTags, ApiOperation, ApiConsumes } from '@nestjs/swagger';
 import { OrgRole } from '@prisma/client';
 import { OrganizationsService } from './organizations.service';
+import { UploadsService } from '../messaging/messages/uploads.service';
 import { UpdateOrganizationDto } from './dto/update-organization.dto';
 import { InviteMemberDto } from './dto/invite-member.dto';
 import { UpdateMemberRoleDto } from './dto/update-member-role.dto';
@@ -20,12 +25,17 @@ import { ResetMemberPasswordDto } from './dto/reset-member-password.dto';
 import { JwtAuthGuard, OrgGuard, RolesGuard } from '../../common/guards';
 import { CurrentUser, CurrentOrg, Roles, Public } from '../../common/decorators';
 
+const MAX_LOGO_BYTES = 5 * 1024 * 1024; // 5MB
+
 @ApiTags('Organizations')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, OrgGuard, RolesGuard)
 @Controller('organizations')
 export class OrganizationsController {
-  constructor(private readonly service: OrganizationsService) {}
+  constructor(
+    private readonly service: OrganizationsService,
+    private readonly uploads: UploadsService,
+  ) {}
 
   @Get('current')
   @ApiOperation({ summary: 'Get current organization details' })
@@ -38,6 +48,31 @@ export class OrganizationsController {
   @ApiOperation({ summary: 'Update current organization' })
   update(@CurrentOrg('id') orgId: string, @Body() dto: UpdateOrganizationDto) {
     return this.service.updateOrganization(orgId, dto);
+  }
+
+  @Post('current/logo')
+  @Roles(OrgRole.OWNER, OrgRole.ADMIN)
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({ summary: 'Upload organization logo (image)' })
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_LOGO_BYTES } }))
+  async uploadLogo(
+    @CurrentOrg('id') orgId: string,
+    @UploadedFile()
+    file: { buffer: Buffer; mimetype: string; originalname?: string } | undefined,
+  ) {
+    if (!file?.buffer?.byteLength) {
+      throw new BadRequestException('Nenhum arquivo enviado');
+    }
+    if (!file.mimetype?.startsWith('image/')) {
+      throw new BadRequestException('Envie uma imagem (PNG, JPG, WEBP…)');
+    }
+    const { url } = await this.uploads.saveMedia({
+      buffer: file.buffer,
+      mimetype: file.mimetype,
+      originalname: file.originalname,
+    });
+    await this.service.updateOrganization(orgId, { logoUrl: url });
+    return { logoUrl: url };
   }
 
   @Get('members')
