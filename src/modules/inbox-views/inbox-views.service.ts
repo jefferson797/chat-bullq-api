@@ -43,6 +43,14 @@ export class InboxViewsService {
       color: '#6b7280',
       filters: { archived: 'only' },
     },
+    {
+      // O filtro é ajustado por papel em ensureBuiltinViews: AGENT vê só as
+      // próprias encerradas (assignedTo: 'me'); OWNER/ADMIN veem todas.
+      name: 'Encerradas',
+      icon: 'CheckCircle2',
+      color: 'green',
+      filters: { statuses: ['CLOSED'] },
+    },
   ];
 
   async list(organizationId: string, userId: string) {
@@ -79,6 +87,14 @@ export class InboxViewsService {
     );
     if (missing.length === 0) return;
 
+    // Papel do usuário na org — decide o filtro da visão "Encerradas":
+    // vendedor (AGENT) só vê as próprias; supervisor (OWNER/ADMIN) vê todas.
+    const membership = await this.prisma.userOrganization.findUnique({
+      where: { userId_organizationId: { userId, organizationId } },
+      select: { role: true },
+    });
+    const isAgent = membership?.role === 'AGENT';
+
     const max = await this.prisma.inboxView.findFirst({
       where: { userId },
       orderBy: { order: 'desc' },
@@ -87,6 +103,10 @@ export class InboxViewsService {
     let nextOrder = (max?.order ?? -1) + 1;
 
     for (const b of missing) {
+      const filters =
+        b.name === 'Encerradas' && isAgent
+          ? { ...b.filters, assignedTo: 'me' }
+          : b.filters;
       await this.prisma.inboxView.create({
         data: {
           organizationId,
@@ -94,7 +114,7 @@ export class InboxViewsService {
           name: b.name,
           icon: b.icon,
           color: b.color,
-          filters: b.filters as object,
+          filters: filters as object,
           metadata: { builtin: true } as object,
           order: nextOrder++,
         },
