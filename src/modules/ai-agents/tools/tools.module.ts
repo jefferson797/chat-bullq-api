@@ -28,6 +28,7 @@ import { HttpToolExecutorService } from './http-tool-executor.service';
 import { SqlToolExecutorService } from './sql-tool-executor.service';
 import { ConfigModule } from '@nestjs/config';
 import { ConfirmationsModule } from '../confirmations/confirmations.module';
+import { NotificationsModule } from '../../notifications/notifications.module';
 
 @Module({
   imports: [
@@ -35,6 +36,7 @@ import { ConfirmationsModule } from '../confirmations/confirmations.module';
     PrismaModule,
     RealtimeModule,
     ConfirmationsModule,
+    NotificationsModule,
     BullModule.registerQueue({ name: 'outbound-messages' }),
   ],
   providers: [

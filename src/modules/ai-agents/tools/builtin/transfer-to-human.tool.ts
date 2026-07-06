@@ -1,7 +1,22 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
+import {
+  MessageContentType,
+  MessageDirection,
+  MessageStatus,
+  NotificationType,
+} from '@prisma/client';
+import { PrismaService } from '../../../../database/prisma.service';
 import { RealtimeGateway } from '../../../realtime/realtime.gateway';
+import { NotificationsService } from '../../../notifications/notifications.service';
 import { PendingActionService } from '../../confirmations/pending-action.service';
 import { AiTool, ToolContext, ToolResult } from '../tool.types';
+
+// Aviso enviado ao cliente no momento em que a IA pede a transferência —
+// pra ele não ficar no silêncio esperando. Tom natural, sem jargão interno.
+const CUSTOMER_HANDOFF_NOTICE =
+  'Deixa eu te transferir pra um atendente da nossa equipe pra te ajudar melhor com isso 🙂 Só um instante que já já alguém te responde por aqui.';
 
 /**
  * Hands the conversation off to a human. Pauses AI on this conversation
@@ -45,6 +60,9 @@ export class TransferToHumanTool implements AiTool {
   constructor(
     private readonly realtime: RealtimeGateway,
     private readonly pendingActions: PendingActionService,
+    private readonly prisma: PrismaService,
+    private readonly notifications: NotificationsService,
+    @InjectQueue('outbound-messages') private readonly outboundQueue: Queue,
   ) {}
 
   async execute(
@@ -90,6 +108,36 @@ export class TransferToHumanTool implements AiTool {
       },
     );
 
+    // Notificação PERSISTENTE pro time (sino/central) — pra alguém ver que
+    // há uma transferência aguardando aprovação, mesmo sem estar com a
+    // conversa aberta. Fire-and-forget: falha aqui não derruba a transferência.
+    this.notifications
+      .notifyOrgAgents({
+        organizationId: ctx.organizationId,
+        type: NotificationType.CONVERSATION_TRANSFERRED,
+        title: '🤖 IA pediu transferência pra atendente',
+        body: reason.slice(0, 240),
+        data: {
+          conversationId: ctx.conversationId,
+          pendingActionId: action.id,
+          reason,
+          summary,
+        },
+      })
+      .catch((err) =>
+        this.logger.warn(
+          `notifyOrgAgents falhou (handoff conv ${ctx.conversationId}): ${err?.message ?? err}`,
+        ),
+      );
+
+    // Avisa o CLIENTE que vai ser transferido — pra ele não ficar no vácuo
+    // enquanto o atendente assume. Enviado pelo sistema (fila outbound padrão).
+    this.sendCustomerNotice(ctx).catch((err) =>
+      this.logger.warn(
+        `aviso de transferência ao cliente falhou (conv ${ctx.conversationId}): ${err?.message ?? err}`,
+      ),
+    );
+
     this.logger.log(
       `Agent ${ctx.agentId} requested handoff for conv ${ctx.conversationId} → pendingAction=${action.id} (reason="${reason}")`,
     );
@@ -103,12 +151,73 @@ export class TransferToHumanTool implements AiTool {
         message:
           'Transferência registrada com sucesso. Atendente humano vai assumir em instantes — fluxo padrão, não é erro.',
         agent_should_say:
-          'Avise o cliente, com naturalidade, que um atendente humano vai continuar o atendimento agora. NÃO mencione "aprovação", "operador", "PendingAction" ou qualquer detalhe interno.',
+          'A mensagem avisando o cliente sobre a transferência JÁ foi enviada pelo sistema. NÃO envie nenhuma outra mensagem — apenas encerre seu turno.',
       },
       // Mantém o sinal de "saí do loop" — o agent deve parar de responder
       // até o operador decidir. Sem isso o LLM seguiria conversando como
       // se tivesse transferido de fato.
       finalAction: 'TRANSFERRED_TO_HUMAN',
     };
+  }
+
+  /**
+   * Manda o aviso de transferência pro cliente pela fila outbound (mesmo
+   * caminho do replyToConversation). Se o contato não tem vínculo no canal,
+   * apenas loga e segue — a transferência continua válida.
+   */
+  private async sendCustomerNotice(ctx: ToolContext): Promise<void> {
+    const binding = await this.prisma.contactChannel.findFirst({
+      where: { contactId: ctx.contactId, channelId: ctx.channelId },
+      select: { externalId: true },
+    });
+    if (!binding?.externalId) {
+      this.logger.warn(
+        `sem contactChannel p/ contato ${ctx.contactId} no canal ${ctx.channelId} — pulando aviso de transferência`,
+      );
+      return;
+    }
+
+    const text = CUSTOMER_HANDOFF_NOTICE;
+    const message = await this.prisma.message.create({
+      data: {
+        conversationId: ctx.conversationId,
+        direction: MessageDirection.OUTBOUND,
+        type: MessageContentType.TEXT,
+        content: { text },
+        status: MessageStatus.QUEUED,
+        senderName: 'Atendimento',
+        metadata: { source: 'handoff-notice', runId: ctx.runId },
+      },
+    });
+
+    await this.prisma.conversation.update({
+      where: { id: ctx.conversationId },
+      data: { lastMessageAt: new Date() },
+    });
+
+    this.realtime.emitToChannel(ctx.channelId, 'message:new', {
+      message,
+      conversationId: ctx.conversationId,
+      contactId: ctx.contactId,
+    });
+    this.realtime.emitToConversation(ctx.conversationId, 'message:new', {
+      message,
+    });
+
+    await this.outboundQueue.add(
+      'send-outbound',
+      {
+        messageId: message.id,
+        channelId: ctx.channelId,
+        contactExternalId: binding.externalId,
+        message: { type: MessageContentType.TEXT, content: { text } },
+      },
+      {
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 5_000 },
+        removeOnComplete: true,
+        removeOnFail: false,
+      },
+    );
   }
 }

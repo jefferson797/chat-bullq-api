@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 
 import { PrismaModule } from '../../../database/prisma.module';
+import { RealtimeModule } from '../../realtime/realtime.module';
+import { NotificationsModule } from '../../notifications/notifications.module';
 import { ToolsModule } from '../tools/tools.module';
 import { ConfirmationsModule } from './confirmations.module';
 import { PendingActionExecutorProcessor } from './pending-action-executor.processor';
@@ -19,7 +21,7 @@ import { PendingActionCronService } from './pending-action-cron.service';
  * o cron registrar o repeatable job.
  */
 @Module({
-  imports: [PrismaModule, ToolsModule, ConfirmationsModule],
+  imports: [PrismaModule, RealtimeModule, NotificationsModule, ToolsModule, ConfirmationsModule],
   providers: [PendingActionExecutorProcessor, PendingActionCronService],
 })
 export class ConfirmationExecutorModule {}

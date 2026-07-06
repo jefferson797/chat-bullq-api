@@ -1,9 +1,10 @@
 import { Logger } from '@nestjs/common';
 import { Processor, WorkerHost } from '@nestjs/bullmq';
-import { Prisma } from '@prisma/client';
+import { ConversationStatus, Prisma } from '@prisma/client';
 import type { Job } from 'bullmq';
 
 import { PrismaService } from '../../../database/prisma.service';
+import { RealtimeGateway } from '../../realtime/realtime.gateway';
 import { HttpToolExecutorService } from '../tools/http-tool-executor.service';
 import type { ToolContext } from '../tools/tool.types';
 import { PendingActionStorage } from './pending-action.storage';
@@ -42,6 +43,7 @@ export class PendingActionExecutorProcessor extends WorkerHost {
     private readonly prisma: PrismaService,
     private readonly httpExecutor: HttpToolExecutorService,
     private readonly storage: PendingActionStorage,
+    private readonly realtime: RealtimeGateway,
   ) {
     super();
   }
@@ -125,13 +127,26 @@ export class PendingActionExecutorProcessor extends WorkerHost {
     conversationId: string;
     args: Record<string, unknown>;
   }): Promise<unknown> {
-    // Pausa a IA na conversa + sinaliza que aguarda atendente humano.
-    // Notificações em tempo real (banner no inbox) já foram emitidas no
-    // momento da criação do PendingAction — aqui só efetivamos a transição.
-    await this.prisma.conversation.update({
+    // Efetiva a transferência: pausa a IA E joga a conversa na FILA (PENDING,
+    // sem agente ativo) pra um vendedor pegar — sem isso a IA só ficava muda
+    // e a conversa não aparecia pra ninguém assumir.
+    const conv = await this.prisma.conversation.update({
       where: { id: action.conversationId },
-      data: { aiEnabled: false },
+      data: {
+        aiEnabled: false,
+        status: ConversationStatus.PENDING,
+        activeAgentId: null,
+      },
+      select: { id: true, channelId: true, assignedToId: true },
     });
+
+    // Atualiza o inbox ao vivo pra a conversa aparecer na fila na hora.
+    this.realtime.emitToChannel(conv.channelId, 'conversation:updated', {
+      conversationId: conv.id,
+      status: ConversationStatus.PENDING,
+      aiEnabled: false,
+    });
+
     return {
       ok: true,
       transferredAt: new Date().toISOString(),
