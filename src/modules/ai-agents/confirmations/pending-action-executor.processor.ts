@@ -126,25 +126,30 @@ export class PendingActionExecutorProcessor extends WorkerHost {
   private async executeTransferToHuman(action: {
     conversationId: string;
     args: Record<string, unknown>;
+    approvedBy?: string;
   }): Promise<unknown> {
-    // Efetiva a transferência: pausa a IA E joga a conversa na FILA (PENDING,
-    // sem agente ativo) pra um vendedor pegar — sem isso a IA só ficava muda
-    // e a conversa não aparecia pra ninguém assumir.
+    // Efetiva a transferência: pausa a IA, joga a conversa na FILA (PENDING,
+    // sem agente ativo) E ATRIBUI a quem aprovou — quem aprova o handoff
+    // assume a conversa (sai de "Sem dono" e vai pra "Minhas"). Sem isso a
+    // conversa ficava em limbo, muda e sem dono, e ninguém a assumia.
     const conv = await this.prisma.conversation.update({
       where: { id: action.conversationId },
       data: {
         aiEnabled: false,
         status: ConversationStatus.PENDING,
         activeAgentId: null,
+        ...(action.approvedBy ? { assignedToId: action.approvedBy } : {}),
       },
       select: { id: true, channelId: true, assignedToId: true },
     });
 
-    // Atualiza o inbox ao vivo pra a conversa aparecer na fila na hora.
+    // Atualiza o inbox ao vivo pra a conversa aparecer na fila / em "Minhas"
+    // na hora, já com o novo dono.
     this.realtime.emitToChannel(conv.channelId, 'conversation:updated', {
       conversationId: conv.id,
       status: ConversationStatus.PENDING,
       aiEnabled: false,
+      assignedToId: conv.assignedToId,
     });
 
     return {
