@@ -137,7 +137,10 @@ model Organization {
   deletedAt DateTime? @map("deleted_at")
 
   // ─── AI settings ────────────────────────────────
-  aiEnabled            Boolean @default(true) @map("ai_enabled")
+  // OFF por padrão: IA em atendimento é opt-in consciente, nunca surpresa.
+  // Uma org nova com IA ligada responde cliente real antes de qualquer
+  // configuração — e ainda bloqueia o auto-assign silenciosamente.
+  aiEnabled            Boolean @default(false) @map("ai_enabled")
   aiTimezone           String  @default("America/Sao_Paulo") @map("ai_timezone")
   aiBusinessHours      Json?   @map("ai_business_hours")
   aiOutOfHoursMessage  String? @map("ai_out_of_hours_message")
