@@ -11,6 +11,7 @@ import {
   MessageDirection,
   MessageContentType,
   MessageStatus,
+  OrgRole,
 } from '@prisma/client';
 import { MessagesRepository } from './messages.repository';
 import { SendMessageDto } from './dto/send-message.dto';
@@ -155,10 +156,16 @@ export class MessagesService {
     // OR if a human explicitly forced AI ON for this conversation (aiEnabled=true).
     // Force-on means "I want the AI here even if I send messages" — usually a
     // human + AI cooperating in COPILOT-style mode.
-    const org = await this.prisma.organization.findUnique({
-      where: { id: organizationId },
-      select: { aiAutoDisableOnHuman: true },
-    });
+    const [org, membership] = await Promise.all([
+      this.prisma.organization.findUnique({
+        where: { id: organizationId },
+        select: { aiAutoDisableOnHuman: true },
+      }),
+      this.prisma.userOrganization.findFirst({
+        where: { userId: senderId, organizationId },
+        select: { role: true },
+      }),
+    ]);
     const shouldDisableAi =
       conversation.aiEnabled !== false &&
       conversation.aiEnabled !== true &&
@@ -169,7 +176,16 @@ export class MessagesService {
     // replies are a no-op. Yes, this can "steal" from a teammate — but the
     // alternative (a conversation stuck on an inactive assignee while
     // someone else is actively replying) is worse for accountability.
-    const shouldAutoAssign = conversation.assignedToId !== senderId;
+    //
+    // Exception: OWNER/ADMIN replying is support, not takeover. Supervisors
+    // jump into threads to help and leave; if every reply stole the
+    // conversation, the seller's queue would bleed into the boss's name.
+    // The conversation stays with the current assignee (or unassigned, where
+    // the next inbound auto-assign picks it up).
+    const isSupervisor =
+      membership?.role === OrgRole.OWNER || membership?.role === OrgRole.ADMIN;
+    const shouldAutoAssign =
+      !isSupervisor && conversation.assignedToId !== senderId;
 
     await this.prisma.conversation.update({
       where: { id: conversation.id },
