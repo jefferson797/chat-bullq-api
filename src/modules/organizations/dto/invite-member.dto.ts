@@ -3,7 +3,7 @@ import { ApiProperty } from '@nestjs/swagger';
 import { OrgRole } from '@prisma/client';
 
 export class InviteMemberDto {
-  @ApiProperty({ example: 'newmember@bravy.com' })
+  @ApiProperty({ example: 'novo.membro@exatek.com.br' })
   @IsEmail()
   email: string;
 

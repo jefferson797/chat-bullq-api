@@ -223,7 +223,7 @@ export class OutboundMessageProcessor extends WorkerHost {
           this.logger.warn(`Typing indicator failed: ${err?.message ?? err}`),
         );
 
-      // Notify the in-app UI (Hoppe) that the agent is "typing".
+      // Notify the in-app UI that the agent is "typing".
       if (row?.conversationId) {
         this.realtimeGateway.emitToConversation(
           row.conversationId,

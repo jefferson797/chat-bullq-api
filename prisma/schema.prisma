@@ -157,12 +157,12 @@ model Organization {
   /// customRules: string[] }. NULL = usa defaults do código.
   aiSecurityRules      Json?   @map("ai_security_rules")
   /// Threshold de confiança do IntentClassifier pra pular o orchestrator.
-  /// Default 0.85. Abaixo disso cai no Augusto.
+  /// Default 0.85. Abaixo disso cai no orquestrador.
   aiClassifierThreshold Decimal? @default(0.85) @map("ai_classifier_threshold") @db.Decimal(3, 2)
 
   /// Lista de domínios permitidos em links que a IA pode mandar pro
-  /// cliente. Quando preenchido (array com strings tipo "bravy.co",
-  /// "trivapp.com.br"), o runtime guard rejeita qualquer URL fora da
+  /// cliente. Quando preenchido (array com strings tipo "exatek.com.br",
+  /// "haygifts.com.br"), o runtime guard rejeita qualquer URL fora da
   /// lista — IA tem que reescrever sem o link inventado. NULL ou
   /// array vazio = permissivo (só loga warning, não bloqueia).
   allowedUrlDomains    Json?   @map("allowed_url_domains")
@@ -858,12 +858,12 @@ model AiAgent {
   modelId      String @map("model_id")
   modelParams  Json?  @map("model_params")
   systemPrompt String @map("system_prompt")
-  // Contexto vivo da operação — atualizado quase diariamente pelo
-  // operador. Ex: "Hoje teve aula sobre Skills. Ofereça Dominando
-  // Claude Code R$ 1.497 (link X) pra quem responder feedback positivo."
+  // Contexto vivo da operação — atualizado com frequência pelo
+  // operador. Ex: "Semana de feira: prazo de DTF está em 5 dias úteis;
+  // priorize orçamentos de brindes acima de 500 un."
   // Injetado no system prompt em todo run, marcado como cache_control
-  // ephemeral pra não inflar token cost — quando o JP edita, o cache
-  // é invalidado naturalmente pela mudança de hash.
+  // ephemeral pra não inflar token cost — quando o operador edita, o
+  // cache é invalidado naturalmente pela mudança de hash.
   operationalContext String?   @map("operational_context")
   operationalContextUpdatedAt DateTime? @map("operational_context_updated_at")
   temperature  Float  @default(0.7)
@@ -920,12 +920,12 @@ enum AiSkillSource {
 model AiTool {
   id             String       @id @default(cuid())
   organizationId String       @map("organization_id")
-  name           String // human-readable, ex: "Trivapp", "Hotwebinar"
+  name           String // human-readable, ex: "ERP Exatek", "Correios"
   description    String       @db.Text
   source         AiToolSource
 
   // HTTP provider
-  httpBaseUrl String? @map("http_base_url") // ex: https://api.trivapp.com.br/api/v1
+  httpBaseUrl String? @map("http_base_url") // ex: https://api.exemplo.com.br/api/v1
   httpHeaders Json?   @map("http_headers") // headers padrão (auth, content-type, etc) com {{env.X}}
 
   // SQL provider
@@ -1368,9 +1368,9 @@ model Card {
 model Product {
   id              String   @id @default(cuid())
   organizationId  String   @map("organization_id")
-  slug            String // "maestria", "plantao-mensal"
-  name            String // "Maestr.IA — Mentoria de Claude Code"
-  category        String? // "Mentoria", "Curso", "Plantão"
+  slug            String // "impressao-uv", "camiseta-dtf"
+  name            String // "Impressão UV em brindes"
+  category        String? // "Impressão", "Brindes", "Serviço"
   shortLine       String // 1 frase pra lista inline no prompt
   pitch           String   @db.Text // texto completo entregue pela skill
   price           String? // texto livre: "R$ 4.500 ou 6x R$ 750"

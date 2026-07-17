@@ -1,23 +1,13 @@
 import type { EvalDataset } from '../types';
 
-import { andreEval } from './andre.eval';
-import { augustoEval } from './augusto.eval';
-import { brunoEval } from './bruno.eval';
-import { danielEval } from './daniel.eval';
-import { liviaEval } from './livia.eval';
-
 /**
  * Catalog of eval datasets keyed by canonical agent name.
  *
  * Keys MUST match `EvalDataset.agentName` exactly so the runner can lookup
  * the dataset by the agent under test without ambiguity.
+ *
+ * Vazio de propósito (2026-07-16): os datasets herdados testavam os agentes
+ * do negócio anterior (Bravy). Os evals da Exatek serão construídos a partir
+ * de conversas reais quando a IA for religada — ver docs/PLANO-IA-V2.md.
  */
-export const datasets: Record<string, EvalDataset> = {
-  'Augusto Mendes': augustoEval,
-  'Daniel Souza': danielEval,
-  'André Silva': andreEval,
-  'Bruno Costa': brunoEval,
-  'Lívia Andrade': liviaEval,
-};
-
-export { andreEval, augustoEval, brunoEval, danielEval, liviaEval };
+export const datasets: Record<string, EvalDataset> = {};

@@ -82,7 +82,7 @@ export function containsMetaTalk(text: string): boolean {
 
 /**
  * Extrai todos os hostnames (sem `www.`) de URLs http(s) num texto.
- * Tolera lixo no fim — `://bravy.co.` ou `bravy.co!` viram `bravy.co`.
+ * Tolera lixo no fim — `://exatek.com.br.` ou `exatek.com.br!` viram `exatek.com.br`.
  */
 export function extractHostnames(text: string): string[] {
   if (!text) return [];
@@ -102,7 +102,7 @@ export function extractHostnames(text: string): string[] {
 
 /**
  * Verifica se o `text` contém URLs cujo host (ou parent domain) está fora
- * da `whitelist`. Compara por sufixo — `members.bravy.co` bate com `bravy.co`.
+ * da `whitelist`. Compara por sufixo — `loja.exatek.com.br` bate com `exatek.com.br`.
  *
  * Returns:
  *  - hosts proibidos encontrados (array vazio = ok)

@@ -6,7 +6,7 @@ import { PromptLayer } from '../types';
  *
  * Sanitiza o prompt customizado do agent removendo tentativas explícitas
  * de override de regras de sistema (ex: "ignore as ferramentas", "nunca
- * peça confirmação"). Padrões inspirados no BullQ (email marketing).
+ * peça confirmação").
  *
  * Importante: a sanitização é defensiva, não substitui a Layer 1 (Security).
  * Mesmo se um padrão proibido escapar, a Layer 1 entra primeiro e prevalece.

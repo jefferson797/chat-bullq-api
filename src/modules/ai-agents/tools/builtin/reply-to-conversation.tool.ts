@@ -91,10 +91,10 @@ export class ReplyToConversationTool implements AiTool {
     ]);
 
     // Guard contra URL inventada (hallucination). Org configura
-    // `allowedUrlDomains` com lista de hosts permitidos (ex: ["bravy.co",
-    // "trivapp.com.br"]). Quando preenchido, bloqueia qualquer URL no reply
+    // `allowedUrlDomains` com lista de hosts permitidos (ex: ["exatek.com.br",
+    // "haygifts.com.br"]). Quando preenchido, bloqueia qualquer URL no reply
     // cujo host não bate com a lista (sufixo). Visto em prod (Daniel Souza,
-    // 2026-05-08 20:39): IA mandou "https://alunos.bravy.co" que não existe.
+    // 2026-05-08 20:39): IA mandou um link de portal que não existe.
     // null/[] = modo permissivo (não bloqueia, só loga warning).
     const whitelist =
       (conversation?.organization?.allowedUrlDomains as string[] | null) ??

@@ -83,7 +83,7 @@ export class UpdateOrganizationDto {
 
   @ApiPropertyOptional({
     description:
-      'Lista de domínios permitidos em URLs que a IA pode mandar (ex: ["bravy.co", "trivapp.com.br"]). Quando preenchida, runtime guard bloqueia qualquer link com host fora da lista — IA é forçada a reescrever sem link inventado. Vazia/null = permissivo (só warning). Match é por sufixo: "bravy.co" autoriza "members.bravy.co".',
+      'Lista de domínios permitidos em URLs que a IA pode mandar (ex: ["exatek.com.br", "haygifts.com.br"]). Quando preenchida, runtime guard bloqueia qualquer link com host fora da lista — IA é forçada a reescrever sem link inventado. Vazia/null = permissivo (só warning). Match é por sufixo: "exatek.com.br" autoriza "loja.exatek.com.br".',
     nullable: true,
     type: [String],
   })

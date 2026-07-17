@@ -26,7 +26,8 @@ import { InboxViewsModule } from './modules/inbox-views/inbox-views.module';
 import { PipelinesModule } from './modules/pipelines/pipelines.module';
 import { AutomationsModule } from './modules/automations/automations.module';
 // ProductsModule religado (2026-07-05) — catálogo LOCAL por org (CRUD +
-// tela de cadastro). A IA ainda consome o Trivapp via skill getProductPitch;
+// tela de cadastro). A IA ainda consome o catálogo externo legado via skill
+// getProductPitch (remoção planejada — docs/PLANO-LIMPEZA-DNA.md, Onda 2);
 // reapontá-la pro catálogo local é um passo separado (integração viva).
 import { ProductsModule } from './modules/products/products.module';
 import redisConfig from './config/redis.config';
