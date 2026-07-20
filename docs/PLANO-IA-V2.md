@@ -59,7 +59,7 @@ agentes (`parentAgentId/department/squad` — metadado nunca lido: implementar o
 
 ## Plano de reconstrução (ordem de execução)
 
-**Fase 0 — Higiene e segurança** *(pré-requisito, junto com a Onda 2/3 do PLANO-LIMPEZA-DNA)*
+**Fase 0 — Higiene e segurança** *(✅ FEITA em 2026-07-20, commit `7d06c5e` — itens 1 e 3 completos; item 2 [consolidar composer vs builder] segue pendente, mas o SYSTEM_TEMPLATE foi reescrito neutro. Bônus: classifier já virou data-driven [Fase 2 item 7 adiantado] e o catálogo já aponta pro Product local [Fase 1 item 5 adiantado].)*
 1. Corrigir gate SQL + transferToHuman pausar IA na hora.
 2. Consolidar num único sistema de prompt (recomendo o composer em camadas); apagar o outro; evals passam a testar o prompt de produção.
 3. Remover tudo que é Bravy/Trivapp/client-ops do registry de tools.

@@ -1,5 +1,14 @@
 # Plano de Limpeza do DNA herdado (Bravy/Trivapp/Hoppe)
 
+> **STATUS (2026-07-20): ✅ Ondas 1, 2 e 3 (parte viva) EXECUTADAS e em produção.**
+> Onda 1: commits `90518f5` (api) / `e29c232` (web) / `27f3fb1` (mcp).
+> Ondas 2+3: commit `7d06c5e` (api) — client-ops/Trivapp/daily-reminder removidos,
+> catálogo da IA no Product local, SYSTEM_TEMPLATE neutro, classifier data-driven,
+> + correções de segurança F0 (gate SQL e transferToHuman pausam certo).
+> Pendentes (por decisão): itens 13-14 (InternalNote e Web Push — schemas mantidos
+> porque ambos são features desejadas no roadmap; remover seria churn de migration)
+> e a rotação de chaves (ação do Jefferson).
+
 > Inventário exaustivo de 2026-07-16. Contexto: o código foi construído para a **Bravy**
 > (mentoria/infoprodutos) integrada ao **Trivapp** (área de membros), **Hoppe** (gerenciador
 > de projetos, `hoppe-api.bravy.com.br`) e conta Google **asv.digital**. "Sofia" é um agente
