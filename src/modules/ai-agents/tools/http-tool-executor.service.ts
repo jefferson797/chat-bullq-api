@@ -69,7 +69,7 @@ export class HttpToolExecutorService {
       };
     }
 
-    // Normaliza emails antes de qualquer uso. APIs do Trivapp (e várias
+    // Normaliza emails antes de qualquer uso. Muitas APIs (e várias
     // outras) tratam emails de forma case-sensitive em alguns endpoints
     // (ex: resetPassword retorna 404 com email "Foo@x.com" mas funciona
     // com "foo@x.com"). Forçar lowercase + trim no input ANTES do template
@@ -250,7 +250,7 @@ export class HttpToolExecutorService {
   private buildRollback(skillName: string): string | undefined {
     switch (skillName) {
       case 'grantAccess':
-        return 'Revogar acesso via revokeAccess (ou painel admin do Trivapp).';
+        return 'Revogar acesso via skill inversa (ou painel admin do sistema de destino).';
       case 'resetPassword':
         return 'Não há rollback automático — orientar o cliente a definir nova senha.';
       case 'sendLoginLink':
@@ -352,7 +352,7 @@ export class HttpToolExecutorService {
    * Normaliza qualquer campo que pareça email no input (top-level ou
    * dentro de objetos rasos): aplica `.toLowerCase().trim()`. Mantém
    * outros campos intactos. Defesa preventiva contra APIs case-sensitive
-   * (Trivapp/resetPassword é o caso conhecido — bug Vinicius_leppers
+   * (resetPassword de sistema externo é o caso conhecido — bug de e-mail com maiúsculas
    * em 2026-05-08).
    */
   private normalizeEmailInputs(

@@ -18,7 +18,6 @@ import { ToolContext } from '../tools/tool.types';
 import { HttpToolExecutorService } from '../tools/http-tool-executor.service';
 import { SqlToolExecutorService } from '../tools/sql-tool-executor.service';
 import { PromptBuilderService } from './prompt-builder.service';
-import { CatalogSyncService } from './catalog-sync.service';
 import { NotificationsService } from '../../notifications/notifications.service';
 import { isToolCallFailure } from '../agents/agents.service';
 import {
@@ -46,11 +45,7 @@ const MAX_RECENT_MESSAGES = 30;
  * nothing after saying "sim, me manda o link". One synthetic nudge
  * forces a final iteration so the link actually goes out.
  */
-const SALES_PREP_TOOLS = new Set([
-  'lookupOffering',
-  'getProductPitch',
-  'checkPurchase',
-]);
+const SALES_PREP_TOOLS = new Set(['lookupOffering']);
 
 interface RunInput {
   conversation: Conversation;
@@ -76,7 +71,6 @@ export class AiAgentRunnerService {
     private readonly promptBuilder: PromptBuilderService,
     private readonly httpExecutor: HttpToolExecutorService,
     private readonly sqlExecutor: SqlToolExecutorService,
-    private readonly catalogSync: CatalogSyncService,
     private readonly notifications: NotificationsService,
     private readonly agentRouter: AgentRouterService,
     private readonly securityLayer: SecurityLayerService,
@@ -144,9 +138,13 @@ export class AiAgentRunnerService {
           },
         }),
         // Compact product list for the cacheable system prompt block.
-        // Source of truth: Trivapp /api/v1/catalog (5min in-memory cache).
-        // Skill getProductPitch(slug) fetches full details on demand.
-        this.catalogSync.getCompactCatalog(conversation.organizationId),
+        // Source of truth: catálogo LOCAL (tabela products, Configurações →
+        // Produtos). Skill lookupOffering(slug) busca detalhes on demand.
+        this.prisma.product.findMany({
+          where: { organizationId: conversation.organizationId, isActive: true },
+          orderBy: [{ order: 'asc' }, { createdAt: 'asc' }],
+          select: { slug: true, name: true, category: true, shortLine: true },
+        }),
       ]);
 
     const run = await this.prisma.aiAgentRun.create({
@@ -353,7 +351,7 @@ export class AiAgentRunnerService {
             messages.push({
               role: 'user',
               content: calledSalesPrep
-                ? 'Você rodou as tools de preparação (lookupOffering / checkPurchase) mas não chamou replyToConversation. O cliente está esperando. Responda agora com replyToConversation: 1 frase de pitch ligada à dor + preço + link do checkout (vindos do lookupOffering). Não termine este turn sem chamar replyToConversation.'
+                ? 'Você rodou a tool de consulta (lookupOffering) mas não chamou replyToConversation. O cliente está esperando. Responda agora com replyToConversation, usando SOMENTE os dados retornados pela consulta (nome/preço/condições) e respeitando a venda consultiva em etapas do system prompt. Não termine este turn sem chamar replyToConversation.'
                 : 'Você ainda NÃO enviou nenhuma resposta ao cliente — ele está esperando. Responda agora chamando replyToConversation com uma mensagem útil e no tom da empresa. Só encerre sem responder se a conversa já foi transferida ou encerrada; caso contrário, SEMPRE responda.',
             });
             continue;

@@ -1,5 +1,4 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { AiAgentKind } from '@prisma/client';
 import { AiTool as BuiltInSkillImpl, toLlmDefinition } from './tool.types';
 import { LlmToolDefinition } from '../llm/llm.types';
@@ -10,13 +9,6 @@ import { ListAvailableAgentsTool } from './builtin/list-available-agents.tool';
 import { DelegateToAgentTool } from './builtin/delegate-to-agent.tool';
 import { HandBackToOrchestratorTool } from './builtin/hand-back-to-orchestrator.tool';
 import { GetProductPitchTool } from './builtin/get-product-pitch.tool';
-import { CheckBonusEligibilityTool } from './builtin/check-bonus-eligibility.tool';
-import { CheckMembersAccessTool } from './builtin/check-members-access.tool';
-import { ConsultarClickUpClienteTool } from './builtin/consultar-clickup-cliente.tool';
-import { ConsultarN8nClienteTool } from './builtin/consultar-n8n-cliente.tool';
-import { ListarReunioesClienteTool } from './builtin/listar-reunioes-cliente.tool';
-import { LerTranscricaoReuniaoTool } from './builtin/ler-transcricao-reuniao.tool';
-import { AgendarReuniaoTool } from './builtin/agendar-reuniao.tool';
 
 /**
  * Registry of BUILT-IN skills (named "tools" in the code for legacy reasons).
@@ -25,9 +17,8 @@ import { AgendarReuniaoTool } from './builtin/agendar-reuniao.tool';
  * agent of the right kind. Custom skills (HTTP/SQL) live in the database
  * and are resolved at runtime via AiAgentSkill.
  *
- * Some built-ins are additionally restricted to specific agents (allowlist
- * de agentIds) — ex.: client-ops da Sofia, que mexem com credenciais de
- * clientes e não fazem sentido pros workers de vendas.
+ * Built-ins podem ser adicionalmente restritos a agentes específicos via
+ * allowlist de agentIds no register() — hoje nenhum usa.
  */
 @Injectable()
 export class ToolRegistry {
@@ -38,7 +29,6 @@ export class ToolRegistry {
   private readonly agentAllowlist = new Map<string, Set<string>>();
 
   constructor(
-    config: ConfigService,
     reply: ReplyToConversationTool,
     transfer: TransferToHumanTool,
     tag: TagConversationTool,
@@ -46,13 +36,6 @@ export class ToolRegistry {
     delegate: DelegateToAgentTool,
     handBack: HandBackToOrchestratorTool,
     lookupOffering: GetProductPitchTool,
-    checkBonusEligibility: CheckBonusEligibilityTool,
-    checkMembersAccess: CheckMembersAccessTool,
-    consultarClickUpCliente: ConsultarClickUpClienteTool,
-    consultarN8nCliente: ConsultarN8nClienteTool,
-    listarReunioesCliente: ListarReunioesClienteTool,
-    lerTranscricaoReuniao: LerTranscricaoReuniaoTool,
-    agendarReuniao: AgendarReuniaoTool,
   ) {
     this.register(reply, ['ORCHESTRATOR', 'WORKER']);
     this.register(transfer, ['ORCHESTRATOR', 'WORKER']);
@@ -60,34 +43,13 @@ export class ToolRegistry {
     this.register(listAgents, ['ORCHESTRATOR']);
     this.register(delegate, ['ORCHESTRATOR']);
     this.register(handBack, ['WORKER']);
-    // Detalhes oficiais (preço/condições/link) das soluções da org —
-    // ORCHESTRATOR e WORKER de vendas usam pra não inventar valor/link.
+    // Detalhes oficiais (preço/condições/link) dos produtos da org, lidos
+    // do catálogo LOCAL (tabela Product) — o agente usa pra não inventar
+    // valor/link.
     this.register(lookupOffering, ['ORCHESTRATOR', 'WORKER']);
-    // Cálculo determinístico de elegibilidade de bônus (D+7 corridos).
-    // Disponível pra todos — bonus é dúvida frequente em qualquer fluxo.
-    this.register(checkBonusEligibility, ['ORCHESTRATOR', 'WORKER']);
-    // Read-only: cliente já tem acesso a entrega na área de membros?
-    // Usado pra "não recebi o brinde" / "cadê o agente grátis" antes
-    // de pedir email novamente ou prometer liberação.
-    this.register(checkMembersAccess, ['ORCHESTRATOR', 'WORKER']);
-
-    // Client-ops (implementação): restritas aos agentes do env
-    // CLIENT_OPS_AGENT_IDS (csv) — default Sofia. Mexem com credenciais
-    // de clientes (ClickUp/n8n/Drive/Calendar via Hoppe).
-    const clientOpsAgents = (
-      config.get<string>('CLIENT_OPS_AGENT_IDS') ?? 'agent_sofia_001'
-    )
-      .split(',')
-      .map((s) => s.trim())
-      .filter(Boolean);
-    this.register(consultarClickUpCliente, ['WORKER'], clientOpsAgents);
-    this.register(consultarN8nCliente, ['WORKER'], clientOpsAgents);
-    this.register(listarReunioesCliente, ['WORKER'], clientOpsAgents);
-    this.register(lerTranscricaoReuniao, ['WORKER'], clientOpsAgents);
-    this.register(agendarReuniao, ['WORKER'], clientOpsAgents);
 
     this.logger.log(
-      `Built-in skills loaded: ${[...this.tools.keys()].join(', ')} (client-ops → ${clientOpsAgents.join(', ')})`,
+      `Built-in skills loaded: ${[...this.tools.keys()].join(', ')}`,
     );
   }
 

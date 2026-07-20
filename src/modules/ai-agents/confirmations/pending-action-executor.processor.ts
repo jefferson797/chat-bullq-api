@@ -6,6 +6,7 @@ import type { Job } from 'bullmq';
 import { PrismaService } from '../../../database/prisma.service';
 import { RealtimeGateway } from '../../realtime/realtime.gateway';
 import { HttpToolExecutorService } from '../tools/http-tool-executor.service';
+import { SqlToolExecutorService } from '../tools/sql-tool-executor.service';
 import type { ToolContext } from '../tools/tool.types';
 import { PendingActionStorage } from './pending-action.storage';
 import {
@@ -42,6 +43,7 @@ export class PendingActionExecutorProcessor extends WorkerHost {
   constructor(
     private readonly prisma: PrismaService,
     private readonly httpExecutor: HttpToolExecutorService,
+    private readonly sqlExecutor: SqlToolExecutorService,
     private readonly storage: PendingActionStorage,
     private readonly realtime: RealtimeGateway,
   ) {
@@ -204,13 +206,16 @@ export class PendingActionExecutorProcessor extends WorkerHost {
       triggerMessageId: run.triggerMessageId ?? '',
     };
 
-    const result = await this.httpExecutor.execute(
-      skill,
-      tool,
-      action.args,
-      ctx,
-      { bypassPendingGate: true },
-    );
+    // Despacha pelo tipo da skill — SQL gateado também precisa executar
+    // após a aprovação (antes só HTTP chegava aqui; SQL nem era gateado).
+    const result =
+      skill.source === 'SQL'
+        ? await this.sqlExecutor.execute(skill, tool, action.args, ctx, {
+            bypassPendingGate: true,
+          })
+        : await this.httpExecutor.execute(skill, tool, action.args, ctx, {
+            bypassPendingGate: true,
+          });
     return result.output;
   }
 }

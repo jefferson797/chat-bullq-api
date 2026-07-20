@@ -2,12 +2,10 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Conversation, Organization } from '@prisma/client';
 import { PrismaService } from '../../../database/prisma.service';
 import { IntentClassifierService } from '../classifier/intent-classifier.service';
-import { IntentRouterService } from '../classifier/intent-router.service';
 import type {
   ClassificationResult,
   ClassifierMessage,
 } from '../classifier/intent.types';
-import { IntentType } from '../classifier/intent.types';
 
 interface BusinessHoursDay {
   enabled: boolean;
@@ -41,7 +39,6 @@ export class AgentRouterService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly classifier: IntentClassifierService,
-    private readonly intentRouter: IntentRouterService,
   ) {}
 
   /**
@@ -78,20 +75,38 @@ export class AgentRouterService {
       }
     }
 
-    // 2. Carrega threshold da org
-    const org = await this.prisma.organization.findUnique({
-      where: { id: conversation.organizationId },
-      select: { aiClassifierThreshold: true },
-    });
+    // 2. Carrega threshold da org + workers roteáveis (data-driven: a lista
+    //    de destinos vem do banco, nunca de nomes chumbados no código).
+    const [org, routableAgents] = await Promise.all([
+      this.prisma.organization.findUnique({
+        where: { id: conversation.organizationId },
+        select: { aiClassifierThreshold: true },
+      }),
+      this.prisma.aiAgent.findMany({
+        where: {
+          organizationId: conversation.organizationId,
+          kind: 'WORKER',
+          isActive: true,
+          deletedAt: null,
+        },
+        select: { id: true, name: true, description: true },
+      }),
+    ]);
     const threshold = org?.aiClassifierThreshold
       ? Number(org.aiClassifierThreshold)
       : 0.85;
+
+    // Sem worker cadastrado não há pra onde rotear — nem gasta o Haiku.
+    if (routableAgents.length === 0) {
+      return this.fallbackToOrchestrator(conversation);
+    }
 
     // 3. Classifica
     let classification: ClassificationResult;
     try {
       classification = await this.classifier.classify(
         latestMessageText,
+        routableAgents,
         recentMessages,
         { threshold },
       );
@@ -103,22 +118,12 @@ export class AgentRouterService {
       return this.fallbackToOrchestrator(conversation);
     }
 
-    // 4. Se confidence alta e intent direcionável → vai direto pro worker
-    if (
-      classification.skippedOrchestrator &&
-      classification.suggestedAgent &&
-      classification.intent !== IntentType.AMBIGUOUS &&
-      classification.intent !== IntentType.SMALL_TALK
-    ) {
-      const agent = await this.prisma.aiAgent.findFirst({
-        where: {
-          organizationId: conversation.organizationId,
-          name: classification.suggestedAgent,
-          isActive: true,
-          deletedAt: null,
-        },
-        select: { id: true, name: true },
-      });
+    // 4. Se confidence alta e id válido → vai direto pro worker (por ID,
+    //    já validado pelo classifier contra a lista da org)
+    if (classification.skippedOrchestrator && classification.suggestedAgentId) {
+      const agent = routableAgents.find(
+        (a) => a.id === classification.suggestedAgentId,
+      );
       if (agent) {
         this.logger.log({
           msg: 'agent_selected_via_classifier',
@@ -136,10 +141,6 @@ export class AgentRouterService {
           classifierCostUsd: classification.costUsd,
         };
       }
-      this.logger.warn({
-        msg: 'classifier_suggested_agent_not_found',
-        suggested: classification.suggestedAgent,
-      });
     }
 
     // 5. Fallback pro orchestrator

@@ -93,8 +93,24 @@ export class TransferToHumanTool implements AiTool {
       preview,
     });
 
+    // PAUSA A IA IMEDIATAMENTE. Cliente que pediu humano não pode continuar
+    // sendo respondido pela IA enquanto a aprovação está na fila — era
+    // exatamente o "pedi atendente e o robô continuou falando" que mina a
+    // confiança. A ATRIBUIÇÃO da conversa continua atrás da aprovação
+    // (quem aprova assume); aqui só silenciamos o agente. Se o operador
+    // rejeitar a transferência, ele reativa a IA pelo toggle da conversa.
+    await this.prisma.conversation.update({
+      where: { id: ctx.conversationId },
+      data: {
+        aiEnabled: false,
+        aiDisabledBy: ctx.agentId,
+        aiDisabledAt: new Date(),
+        activeAgentId: null,
+      },
+    });
+
     // Notifica o operador imediatamente — ele revisa a fila de pendências
-    // e aprova/rejeita. A pausa da IA acontece SOMENTE após aprovação,
+    // e aprova/rejeita. O handoff/atribuição acontece após aprovação,
     // pelo executor da fase 2.
     this.realtime.emitToConversation(
       ctx.conversationId,

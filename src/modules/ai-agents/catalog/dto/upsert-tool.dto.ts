@@ -10,12 +10,12 @@ import {
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 /**
- * A Tool is a CONNECTION provider (Trivapp = HTTP base+auth, Hotwebinar = SQL DSN).
+ * A Tool is a CONNECTION provider (HTTP base+auth, or SQL DSN).
  * It does NOT have parameters or a name visible to the LLM. Skills bind to a Tool
  * and provide the actual function definition.
  */
 export class UpsertToolDto {
-  @ApiProperty({ example: 'Trivapp' })
+  @ApiProperty({ example: 'ERP Exatek' })
   @IsString()
   @MinLength(2)
   @MaxLength(60)
@@ -35,14 +35,14 @@ export class UpsertToolDto {
 
   // ── HTTP provider fields ────────────────────────────────────────
 
-  @ApiPropertyOptional({ example: 'https://api.trivapp.com.br/api/v1' })
+  @ApiPropertyOptional({ example: 'https://api.exemplo.com.br/api/v1' })
   @IsOptional()
   @IsString()
   httpBaseUrl?: string;
 
   @ApiPropertyOptional({
     description:
-      'Headers padrão (auth, content-type). Templates: {{env.X}}. Ex: {"x-admin-api-key":"{{env.MEMBERS_ADMIN_KEY}}"}',
+      'Headers padrão (auth, content-type). Templates: {{env.X}}. Ex: {"Authorization":"Bearer {{env.MINHA_API_KEY}}"}',
   })
   @IsOptional()
   @IsObject()

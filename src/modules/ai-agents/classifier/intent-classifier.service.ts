@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { LlmService } from '../llm/llm.service';
 import { LlmMessage } from '../llm/llm.types';
 import {
-  CLASSIFIER_SYSTEM_PROMPT,
+  buildClassifierSystemPrompt,
   buildClassifierUserPrompt,
 } from './classifier.prompt';
 import {
@@ -10,22 +10,24 @@ import {
   ClassifierConfig,
   ClassifierMessage,
   IntentType,
+  RoutableAgent,
 } from './intent.types';
-import { IntentRouterService } from './intent-router.service';
 
 /**
- * Camada leve de pré-roteamento que roda antes do orchestrator (Augusto).
+ * Camada leve de pré-roteamento que roda antes do orchestrator.
  *
  * Fluxo:
- *  1. Pega a mensagem (e até 3 do histórico) e manda pro Haiku via LlmService
+ *  1. Recebe a lista de workers roteáveis da org (do AgentRouter) e monta
+ *     o system prompt em runtime — DATA-DRIVEN, sem nome chumbado.
+ *  2. Pega a mensagem (e até 3 do histórico) e manda pro Haiku via LlmService
  *     pedindo um JSON estruturado.
- *  2. Faz parsing tolerante — se o modelo voltar markdown ou texto extra,
+ *  3. Faz parsing tolerante — se o modelo voltar markdown ou texto extra,
  *     ainda extrai o JSON de dentro.
- *  3. Decide se o orchestrator pode ser pulado: precisa de confidence acima
- *     do threshold E intent direcionável (não AMBIGUOUS/SPAM/ESCALATE/SMALL).
- *  4. Estima custo da chamada — se o LlmService já trouxe `usage.costUsd`,
- *     usa direto; caso contrário, calcula com base nos tokens (Haiku tem
- *     preço público estável).
+ *  4. Decide se o orchestrator pode ser pulado: precisa de confidence acima
+ *     do threshold E intent ROUTE_TO_AGENT com suggestedAgentId VÁLIDO
+ *     (presente na lista fornecida — id inventado é descartado).
+ *  5. Estima custo da chamada — se o LlmService já trouxe `usage.costUsd`,
+ *     usa direto; caso contrário, calcula com base nos tokens.
  *
  * Erros NÃO derrubam a request: se o classifier falhar, devolve um result
  * com intent=AMBIGUOUS pra forçar fallback no orchestrator.
@@ -36,18 +38,16 @@ export class IntentClassifierService {
   private readonly DEFAULT_MODEL = 'claude-haiku-4-5';
   private readonly DEFAULT_THRESHOLD = 0.85;
 
-  // Preço público da Anthropic pra Haiku 3.5 (USD por token).
+  // Preço público da Anthropic pra Haiku (USD por token).
   // Usado só como fallback quando o provider não retorna `cost`.
   private readonly HAIKU_INPUT_USD_PER_TOKEN = 1.0 / 1_000_000;
   private readonly HAIKU_OUTPUT_USD_PER_TOKEN = 5.0 / 1_000_000;
 
-  constructor(
-    private readonly llm: LlmService,
-    private readonly intentRouter: IntentRouterService,
-  ) {}
+  constructor(private readonly llm: LlmService) {}
 
   async classify(
     message: string,
+    routableAgents: RoutableAgent[],
     recentMessages?: ClassifierMessage[],
     config?: Partial<ClassifierConfig>,
   ): Promise<ClassificationResult> {
@@ -59,7 +59,11 @@ export class IntentClassifierService {
       {
         role: 'system',
         content: [
-          { type: 'text', text: CLASSIFIER_SYSTEM_PROMPT, cache: true },
+          {
+            type: 'text',
+            text: buildClassifierSystemPrompt(routableAgents),
+            cache: true,
+          },
         ],
       },
       {
@@ -91,17 +95,25 @@ export class IntentClassifierService {
         typeof parsed?.reasoning === 'string'
           ? parsed.reasoning.slice(0, 300)
           : '';
-      const suggestedAgent =
-        typeof parsed?.suggestedAgent === 'string' && parsed.suggestedAgent
-          ? parsed.suggestedAgent
+
+      // Valida o id sugerido contra a lista REAL — id inventado/alucinado
+      // é descartado e o caso cai no orchestrator.
+      const rawSuggested =
+        typeof parsed?.suggestedAgentId === 'string' && parsed.suggestedAgentId
+          ? parsed.suggestedAgentId.trim()
+          : null;
+      const suggestedAgentId =
+        rawSuggested && routableAgents.some((a) => a.id === rawSuggested)
+          ? rawSuggested
           : null;
 
-      // Decisão final de skip leva em conta tanto o threshold quanto a
-      // categoria do intent — AMBIGUOUS/SPAM/ESCALATE/SMALL_TALK SEMPRE
-      // caem no orchestrator, mesmo com confidence alta.
-      const route = this.intentRouter.routeIntent(intent);
+      // Decisão final de skip: só ROUTE_TO_AGENT com id válido e confidence
+      // acima do threshold pula o orchestrator. Todo o resto (SMALL_TALK,
+      // AMBIGUOUS, SPAM, ESCALATE) SEMPRE cai no orchestrator.
       const skippedOrchestrator =
-        route.shouldSkipOrchestrator && confidence >= threshold;
+        intent === IntentType.ROUTE_TO_AGENT &&
+        suggestedAgentId !== null &&
+        confidence >= threshold;
 
       // Custo: prefere o `cost` do provider quando disponível, senão
       // estima com a tabela de preço do Haiku.
@@ -117,7 +129,7 @@ export class IntentClassifierService {
         intent,
         confidence,
         reasoning,
-        suggestedAgent: suggestedAgent ?? route.agentName ?? null,
+        suggestedAgentId,
         skippedOrchestrator,
         modelUsed: resp.rawModelId ?? model,
         costUsd,
@@ -129,6 +141,7 @@ export class IntentClassifierService {
           msg: 'intent_classified',
           intent: result.intent,
           confidence: result.confidence,
+          suggestedAgentId: result.suggestedAgentId,
           skipped: result.skippedOrchestrator,
           costUsd: Number(result.costUsd.toFixed(6)),
           durationMs: result.durationMs,
@@ -152,7 +165,7 @@ export class IntentClassifierService {
         intent: IntentType.AMBIGUOUS,
         confidence: 0,
         reasoning: `classifier failed: ${err?.message ?? 'unknown'}`,
-        suggestedAgent: null,
+        suggestedAgentId: null,
         skippedOrchestrator: false,
         modelUsed: model,
         costUsd: 0,

@@ -62,7 +62,7 @@ export class CreateAgentDto {
   @IsObject()
   modelParams?: Record<string, unknown>;
 
-  @ApiProperty({ example: 'Você é um vendedor consultivo da Bravy School...' })
+  @ApiProperty({ example: 'Você é um vendedor consultivo da Exatek...' })
   @IsString()
   @MinLength(10)
   systemPrompt!: string;

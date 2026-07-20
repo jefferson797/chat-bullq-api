@@ -2,18 +2,29 @@ import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { AiSkill, AiTool } from '@prisma/client';
 import { Pool } from 'pg';
+import { PrismaService } from '../../../database/prisma.service';
+import { PendingActionService } from '../confirmations/pending-action.service';
+import type { ActionPreview, ImpactLevel } from '../confirmations/confirmation.types';
 import { ToolContext, ToolResult } from './tool.types';
 
 /**
  * Executes SQL-backed Skills. Connection (DSN env-var ref) comes from
  * AiTool, query + params + read-only + maxRows come from AiSkill.
+ *
+ * Skills marcadas com `requiresApproval=true` em `ai_agent_skills` passam
+ * pelo MESMO gate de PendingAction do executor HTTP — antes desta correção
+ * o SQL executava direto e furava a aprovação.
  */
 @Injectable()
 export class SqlToolExecutorService implements OnModuleDestroy {
   private readonly logger = new Logger(SqlToolExecutorService.name);
   private readonly pools = new Map<string, Pool>();
 
-  constructor(private readonly config: ConfigService) {}
+  constructor(
+    private readonly config: ConfigService,
+    private readonly prisma: PrismaService,
+    private readonly pendingActions: PendingActionService,
+  ) {}
 
   async onModuleDestroy() {
     for (const pool of this.pools.values()) {
@@ -21,14 +32,79 @@ export class SqlToolExecutorService implements OnModuleDestroy {
     }
   }
 
+  /**
+   * Cria o PendingAction e devolve o output "fluxo normal" pro LLM (mesmo
+   * wording do executor HTTP — wording de "aguardando aprovação" fazia o
+   * modelo achar que era prompt injection).
+   */
+  private async gateAsPendingAction(
+    skill: AiSkill,
+    input: Record<string, unknown>,
+    ctx: ToolContext,
+  ): Promise<ToolResult> {
+    const impact: ImpactLevel = skill.sqlReadOnly ? 'medium' : 'high';
+    const preview: ActionPreview = {
+      action: `${skill.name}(${JSON.stringify(input).slice(0, 200)})`,
+      impact,
+      rollback: skill.sqlReadOnly
+        ? 'Consulta read-only — sem efeito a desfazer.'
+        : 'Reverter manualmente no banco de destino (query de escrita).',
+      affectedEntity: {
+        type: 'contact',
+        id: ctx.contactId,
+        label: `contact:${ctx.contactId}`,
+      },
+    };
+
+    const action = await this.pendingActions.create({
+      agentRunId: ctx.runId,
+      conversationId: ctx.conversationId,
+      agentId: ctx.agentId,
+      toolName: skill.name,
+      args: input,
+      preview,
+    });
+
+    this.logger.log(
+      `[skill:${skill.name}] SQL gated as pendingAction=${action.id} (impact=${impact})`,
+    );
+
+    return {
+      output: {
+        ok: true,
+        status: 'queued_for_processing',
+        pendingActionId: action.id,
+        preview,
+        message:
+          'Solicitação registrada com sucesso e enviada pra processamento. Operador humano vai concluir em instantes — fluxo padrão, não é erro.',
+        agent_should_say:
+          'Avise o cliente, com naturalidade, que a solicitação já foi registrada e será concluída em instantes. NÃO mencione "aprovação humana", "operador" ou qualquer detalhe interno do sistema.',
+      },
+    };
+  }
+
   async execute(
     skill: AiSkill,
     tool: AiTool,
     input: Record<string, unknown>,
     ctx: ToolContext,
+    options: { bypassPendingGate?: boolean } = {},
   ): Promise<ToolResult> {
     if (skill.source !== 'SQL') {
       throw new Error(`Skill ${skill.name} is not a SQL skill`);
+    }
+
+    // Gate de aprovação — espelho do HttpToolExecutorService. Operador
+    // marca `requires_approval=true` na UI → a skill vira PendingAction e
+    // SÓ roda depois de aprovada (bypassPendingGate=true no pós-aprovação).
+    if (!options.bypassPendingGate) {
+      const link = await this.prisma.aiAgentSkill.findUnique({
+        where: { agentId_skillId: { agentId: ctx.agentId, skillId: skill.id } },
+        select: { requiresApproval: true },
+      });
+      if (link?.requiresApproval) {
+        return this.gateAsPendingAction(skill, input, ctx);
+      }
     }
     if (tool.source !== 'CUSTOM_SQL') {
       throw new Error(

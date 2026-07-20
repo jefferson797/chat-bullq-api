@@ -86,7 +86,7 @@ export interface EnrichedContext {
   };
   channel: {
     kind: 'WHATSAPP' | 'INSTAGRAM' | 'WEB';
-    /** Nome legível do canal (ex: "WhatsApp Bravy Vendas"). */
+    /** Nome legível do canal (ex: "WhatsApp Vendas"). */
     name: string;
   };
   time: {

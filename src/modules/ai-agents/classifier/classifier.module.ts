@@ -2,7 +2,6 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { LlmModule } from '../llm/llm.module';
 import { IntentClassifierService } from './intent-classifier.service';
-import { IntentRouterService } from './intent-router.service';
 
 /**
  * Módulo do Intent Classifier.
@@ -13,7 +12,7 @@ import { IntentRouterService } from './intent-router.service';
  */
 @Module({
   imports: [ConfigModule, LlmModule],
-  providers: [IntentClassifierService, IntentRouterService],
-  exports: [IntentClassifierService, IntentRouterService],
+  providers: [IntentClassifierService],
+  exports: [IntentClassifierService],
 })
 export class ClassifierModule {}

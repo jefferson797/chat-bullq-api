@@ -8,7 +8,6 @@ import { RealtimeModule } from '../realtime/realtime.module';
 import { ChannelHubModule } from '../channel-hub/channel-hub.module';
 import { PromptBuilderService } from './runner/prompt-builder.service';
 import { AiAgentRunnerService } from './runner/agent-runner.service';
-import { CatalogSyncService } from './runner/catalog-sync.service';
 import { MediaUrlResolverService } from './runner/media-url-resolver.service';
 import { AgentRouterService } from './router/agent-router.service';
 import { AgentsService } from './agents/agents.service';
@@ -53,7 +52,6 @@ import { EvalsModule } from './evals/evals.module';
     AgentsService,
     ToolsCatalogService,
     SkillsCatalogService,
-    CatalogSyncService,
     MediaUrlResolverService,
   ],
   exports: [AiAgentRunnerService, AgentRouterService],
