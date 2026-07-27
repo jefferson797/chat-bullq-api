@@ -56,4 +56,27 @@ export class PublicContactsController {
     });
     return { contacts };
   }
+
+  /**
+   * Refs do Google Ads (gclid capturado da 1ª mensagem, ver inbound processor)
+   * pra um lote de contatos — usado pelo export de conversões offline do ERP.
+   */
+  @Get('ads-refs')
+  @ApiOperation({ summary: 'Google Ads click refs (gclid) for a batch of contact ids' })
+  @ApiQuery({ name: 'ids', required: true, description: 'comma-separated contact ids (max 500)' })
+  async adsRefs(@CurrentOrg('id') orgId: string, @Query('ids') ids?: string) {
+    const list = (ids || '').split(',').map((s) => s.trim()).filter(Boolean).slice(0, 500);
+    if (!list.length) return { refs: [] };
+    const rows = await this.prisma.contact.findMany({
+      where: { organizationId: orgId, id: { in: list }, deletedAt: null },
+      select: { id: true, metadata: true },
+    });
+    const refs = rows
+      .map((r) => {
+        const meta = (r.metadata ?? {}) as Record<string, any>;
+        return { id: r.id, gclid: meta.gclid ?? null, gclidCapturedAt: meta.gclidCapturedAt ?? null };
+      })
+      .filter((r) => r.gclid);
+    return { refs };
+  }
 }

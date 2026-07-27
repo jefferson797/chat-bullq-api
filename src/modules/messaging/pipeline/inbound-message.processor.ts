@@ -254,6 +254,16 @@ export class InboundMessageProcessor extends WorkerHost {
         message: savedMessage,
       });
 
+      // Conversões offline (Google Ads): a LP da Exatek anexa "ref:<gclid>" na
+      // mensagem pré-preenchida do WhatsApp. Captura da 1ª inbound e guarda no
+      // contato — o ERP casa com a venda e sobe a conversão real no Google.
+      // Fire-and-forget: nunca pode derrubar o pipeline.
+      if (isNew && !isEcho && direction === MessageDirection.INBOUND) {
+        this.maybeCaptureAdsRef(contactId, message).catch((err) =>
+          this.logger.warn(`Ads ref capture failed contact=${contactId}: ${err?.message ?? err}`),
+        );
+      }
+
       if (
         !isEcho &&
         (status === ConversationStatus.BOT ||
@@ -379,6 +389,40 @@ export class InboundMessageProcessor extends WorkerHost {
         .catch(() => undefined);
       throw err;
     }
+  }
+
+  /**
+   * Extrai o "ref:<gclid>" da mensagem (anexado pela LP no texto pré-preenchido
+   * do wa.me) e grava em Contact.metadata.gclid. O PRIMEIRO clique vence —
+   * é o que vale pra atribuição da venda no Google Ads.
+   */
+  private async maybeCaptureAdsRef(
+    contactId: string,
+    message: NormalizedInboundMessage,
+  ): Promise<void> {
+    const content = (message.content ?? {}) as Record<string, any>;
+    const text =
+      typeof content.text === 'string'
+        ? content.text
+        : typeof content.caption === 'string'
+          ? content.caption
+          : '';
+    const m = /\bref:([A-Za-z0-9_-]{10,})/.exec(text);
+    if (!m) return;
+    const contact = await this.prisma.contact.findUnique({
+      where: { id: contactId },
+      select: { metadata: true },
+    });
+    if (!contact) return;
+    const meta = (contact.metadata ?? {}) as Record<string, any>;
+    if (meta.gclid) return; // primeiro clique vence
+    await this.prisma.contact.update({
+      where: { id: contactId },
+      data: {
+        metadata: { ...meta, gclid: m[1], gclidCapturedAt: new Date().toISOString() },
+      },
+    });
+    this.logger.log(`Ads ref (gclid) capturado pro contato ${contactId}`);
   }
 
   /**
