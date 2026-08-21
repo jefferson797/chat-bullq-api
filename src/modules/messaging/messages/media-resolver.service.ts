@@ -21,6 +21,12 @@ import { UploadsService } from './uploads.service';
 export class MediaResolverService {
   private readonly logger = new Logger(MediaResolverService.name);
 
+  // Tempo máximo que a request do cliente espera pelo rehost. Arquivo pequeno
+  // termina dentro do orçamento e já sai com URL permanente; arquivo grande
+  // (arte de estampa de 50-100MB) responde na hora com a URL do provider
+  // enquanto o rehost continua em background e cacheia pro próximo acesso.
+  private static readonly REHOST_SYNC_BUDGET_MS = 8_000;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly adapterRegistry: ChannelAdapterRegistry,
@@ -93,31 +99,10 @@ export class MediaResolverService {
       mimeType = mimeType || resolved.mimeType;
     }
 
-    // 4) Re-hospeda (baixa + salva local) pra sobreviver à expiração do
-    //    provider. Lazy: só na primeira visualização, fora do hot path de
-    //    ingestão. Em caso de falha, cai pro comportamento antigo (URL do
-    //    provider) — e marca como indisponível se a mídia sumiu de vez.
-    try {
-      const rehosted = await this.rehostMedia(
-        sourceUrl,
-        mimeType,
-        channel.id,
-        typeof content.fileName === 'string' ? content.fileName : null,
-      );
-      await this.prisma.message.update({
-        where: { id: messageId },
-        data: {
-          content: {
-            ...content,
-            mediaUrl: rehosted.url,
-            mimeType: rehosted.mimeType,
-            mediaRehosted: true,
-          } as any,
-        },
-      });
-      return { url: rehosted.url, mimeType: rehosted.mimeType };
-    } catch (err: any) {
-      const gone = err?.mediaGone === true;
+    // Alguns adapters (WhatsApp Cloud) já baixam e salvam no nosso storage
+    // dentro do resolveInboundMediaUrl — a URL devolvida já é local. Só
+    // cacheia; re-baixar de nós mesmos seria duplicar o arquivo no disco.
+    if (sourceUrl.includes('/api/v1/uploads/')) {
       await this.prisma.message
         .update({
           where: { id: messageId },
@@ -125,17 +110,84 @@ export class MediaResolverService {
             content: {
               ...content,
               mediaUrl: sourceUrl,
-              ...(mimeType && !content.mimeType ? { mimeType } : {}),
-              ...(gone ? { mediaUnavailable: true } : {}),
+              ...(mimeType ? { mimeType } : {}),
+              mediaRehosted: true,
             } as any,
           },
         })
         .catch(() => undefined);
-      this.logger.warn(
-        `media rehost failed for ${messageId}: ${err?.message ?? err}`,
+      return { url: sourceUrl, mimeType };
+    }
+
+    // 4) Re-hospeda (baixa + salva local) pra sobreviver à expiração do
+    //    provider. Lazy: só na primeira visualização, fora do hot path de
+    //    ingestão. Em caso de falha, cai pro comportamento antigo (URL do
+    //    provider) — e marca como indisponível se a mídia sumiu de vez.
+    //    A request do cliente espera no máximo REHOST_SYNC_BUDGET_MS: se o
+    //    rehost não terminar a tempo, respondemos já com a URL do provider e
+    //    o rehost segue em background até cachear a URL permanente.
+    const rehostPromise: Promise<{ url: string; mimeType: string } | null> =
+      (async () => {
+        try {
+          const rehosted = await this.rehostMedia(
+            sourceUrl,
+            mimeType,
+            channel.id,
+            typeof content.fileName === 'string' ? content.fileName : null,
+          );
+          await this.prisma.message.update({
+            where: { id: messageId },
+            data: {
+              content: {
+                ...content,
+                mediaUrl: rehosted.url,
+                mimeType: rehosted.mimeType,
+                mediaRehosted: true,
+              } as any,
+            },
+          });
+          return rehosted;
+        } catch (err: any) {
+          const gone = err?.mediaGone === true;
+          await this.prisma.message
+            .update({
+              where: { id: messageId },
+              data: {
+                content: {
+                  ...content,
+                  mediaUrl: sourceUrl,
+                  ...(mimeType && !content.mimeType ? { mimeType } : {}),
+                  ...(gone ? { mediaUnavailable: true } : {}),
+                } as any,
+              },
+            })
+            .catch(() => undefined);
+          this.logger.warn(
+            `media rehost failed for ${messageId}: ${err?.message ?? err}`,
+          );
+          return null;
+        }
+      })();
+
+    let budgetTimer: NodeJS.Timeout | undefined;
+    const budget = new Promise<'budget'>((resolve) => {
+      budgetTimer = setTimeout(
+        () => resolve('budget'),
+        MediaResolverService.REHOST_SYNC_BUDGET_MS,
+      );
+    });
+    const raced = await Promise.race([rehostPromise, budget]);
+    clearTimeout(budgetTimer);
+
+    if (raced === 'budget') {
+      this.logger.log(
+        `media rehost for ${messageId} exceeded ${MediaResolverService.REHOST_SYNC_BUDGET_MS}ms — serving provider URL, rehost continues in background`,
       );
       return { url: sourceUrl, mimeType };
     }
+    // Rehost terminou dentro do orçamento: sucesso devolve URL permanente,
+    // falha devolve a URL do provider (comportamento antigo).
+    return raced ? { url: raced.url, mimeType: raced.mimeType } : { url: sourceUrl, mimeType };
   }
 
   /**
