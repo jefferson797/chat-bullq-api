@@ -8,6 +8,7 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../../../database/prisma.service';
 import { NotificationsService } from '../../notifications/notifications.service';
+import { contactDisplayTitle } from '../../../common/utils/contact-display.util';
 import { AiAgentRunnerService } from '../../ai-agents/runner/agent-runner.service';
 import { AgentRouterService } from '../../ai-agents/router/agent-router.service';
 import { RealtimeGateway } from '../../realtime/realtime.gateway';
@@ -66,7 +67,7 @@ export class WatchdogTimerProcessor extends WorkerHost {
       where: { id: conversationId },
       include: {
         organization: true,
-        contact: { select: { name: true, phone: true } },
+        contact: { select: { name: true, firstName: true, lastName: true, company: true, phone: true } },
         assignedTo: { select: { id: true, name: true } },
       },
     });
@@ -104,7 +105,7 @@ export class WatchdogTimerProcessor extends WorkerHost {
         conversation.organizationId,
         conversation.assignedTo?.id,
         conversation.id,
-        conversation.contact?.name ?? conversation.contact?.phone ?? 'Cliente',
+        contactDisplayTitle(conversation.contact),
         'ai_disabled_by_human',
       );
       await this.clearJobId(conversationId);
@@ -144,7 +145,7 @@ export class WatchdogTimerProcessor extends WorkerHost {
       await this.markStuck(
         conversationId,
         conversation.organizationId,
-        conversation.contact?.name ?? conversation.contact?.phone ?? 'Cliente',
+        contactDisplayTitle(conversation.contact),
       );
       await this.clearJobId(conversationId);
       return { stuck: true, attempts: conversation.stuckAttempts };
@@ -174,7 +175,7 @@ export class WatchdogTimerProcessor extends WorkerHost {
         conversation.organizationId,
         conversation.assignedTo.id,
         conversation.id,
-        conversation.contact?.name ?? conversation.contact?.phone ?? 'Cliente',
+        contactDisplayTitle(conversation.contact),
         'human_idle_taking_over',
       );
     }

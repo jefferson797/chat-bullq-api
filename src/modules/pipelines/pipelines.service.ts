@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { CardStatus, PipelineStageType } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
+import { contactDisplayTitle } from '../../common/utils/contact-display.util';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
 import {
   CreateCardDto,
@@ -55,7 +56,7 @@ export class PipelinesService {
         where: { pipelineId },
         orderBy: { order: 'asc' },
         include: {
-          contact: { select: { id: true, name: true, phone: true, avatarUrl: true } },
+          contact: { select: { id: true, name: true, firstName: true, lastName: true, company: true, phone: true, avatarUrl: true } },
           assignedTo: { select: { id: true, name: true, avatarUrl: true } },
           // Channel comes via the linked conversation — the kanban card UI
           // surfaces the icon (Zappfy/Meta/Instagram) so the operator can
@@ -251,14 +252,14 @@ export class PipelinesService {
           id: true,
           organizationId: true,
           contactId: true,
-          contact: { select: { name: true, phone: true } },
+          contact: { select: { name: true, firstName: true, lastName: true, company: true, phone: true } },
         },
       });
       if (!conv || conv.organizationId !== organizationId) {
         throw new BadRequestException('conversationId inválido');
       }
       if (!dto.title?.trim()) {
-        dto.title = conv.contact.name || conv.contact.phone || 'Sem nome';
+        dto.title = contactDisplayTitle(conv.contact, 'Sem nome');
       }
       if (!dto.contactId) {
         dto.contactId = conv.contactId;
@@ -311,7 +312,7 @@ export class PipelinesService {
         order: nextOrder,
       },
       include: {
-        contact: { select: { id: true, name: true, phone: true, avatarUrl: true } },
+        contact: { select: { id: true, name: true, firstName: true, lastName: true, company: true, phone: true, avatarUrl: true } },
         assignedTo: { select: { id: true, name: true, avatarUrl: true } },
       },
     });
@@ -353,7 +354,7 @@ export class PipelinesService {
           : {}),
       },
       include: {
-        contact: { select: { id: true, name: true, phone: true, avatarUrl: true } },
+        contact: { select: { id: true, name: true, firstName: true, lastName: true, company: true, phone: true, avatarUrl: true } },
         assignedTo: { select: { id: true, name: true, avatarUrl: true } },
       },
     });
@@ -479,7 +480,7 @@ export class PipelinesService {
     return this.prisma.card.findUnique({
       where: { id: cardId },
       include: {
-        contact: { select: { id: true, name: true, phone: true, avatarUrl: true } },
+        contact: { select: { id: true, name: true, firstName: true, lastName: true, company: true, phone: true, avatarUrl: true } },
         assignedTo: { select: { id: true, name: true, avatarUrl: true } },
       },
     });

@@ -4,6 +4,7 @@ import { Job } from 'bullmq';
 import { ConversationStatus, NotificationType } from '@prisma/client';
 import { PrismaService } from '../../../database/prisma.service';
 import { NotificationsService } from '../../notifications/notifications.service';
+import { contactDisplayTitle } from '../../../common/utils/contact-display.util';
 
 @Processor('sla-timers', { concurrency: 2 })
 export class SlaTimerProcessor extends WorkerHost {
@@ -25,7 +26,7 @@ export class SlaTimerProcessor extends WorkerHost {
 
     const conversation = await this.prisma.conversation.findUnique({
       where: { id: conversationId },
-      include: { contact: { select: { name: true, phone: true } }, assignedTo: { select: { id: true, name: true } } },
+      include: { contact: { select: { name: true, firstName: true, lastName: true, company: true, phone: true } }, assignedTo: { select: { id: true, name: true } } },
     });
 
     if (!conversation) return { skipped: true, reason: 'conversation_not_found' };
@@ -35,7 +36,7 @@ export class SlaTimerProcessor extends WorkerHost {
         return { skipped: true, reason: 'already_responded_or_closed' };
       }
 
-      const contactName = conversation.contact?.name || conversation.contact?.phone || 'Cliente';
+      const contactName = contactDisplayTitle(conversation.contact);
 
       await this.notifications.notifyOrgAgents({
         organizationId,
@@ -54,7 +55,7 @@ export class SlaTimerProcessor extends WorkerHost {
         return { skipped: true, reason: 'already_closed' };
       }
 
-      const contactName = conversation.contact?.name || conversation.contact?.phone || 'Cliente';
+      const contactName = contactDisplayTitle(conversation.contact);
 
       await this.notifications.notifyOrgAgents({
         organizationId,

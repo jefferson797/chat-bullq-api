@@ -138,6 +138,9 @@ export class ConversationsRepository {
     if (filters.search) {
       where.OR = [
         { contact: { name: { contains: filters.search, mode: 'insensitive' } } },
+        { contact: { firstName: { contains: filters.search, mode: 'insensitive' } } },
+        { contact: { lastName: { contains: filters.search, mode: 'insensitive' } } },
+        { contact: { company: { contains: filters.search, mode: 'insensitive' } } },
         { contact: { phone: { contains: filters.search } } },
         { protocol: { contains: filters.search } },
       ];
@@ -208,6 +211,9 @@ export class ConversationsRepository {
             select: {
               id: true,
               name: true,
+              firstName: true,
+              lastName: true,
+              company: true,
               phone: true,
               avatarUrl: true,
               tags: { include: { tag: true } },
