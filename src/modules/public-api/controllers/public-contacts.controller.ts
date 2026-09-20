@@ -1,4 +1,4 @@
-import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { BadRequestException, Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiQuery, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import { Prisma } from '@prisma/client';
 import { ApiKeyAuthGuard } from '../../../common/guards';
@@ -78,5 +78,42 @@ export class PublicContactsController {
       })
       .filter((r) => r.gclid);
     return { refs };
+  }
+
+  /**
+   * Leads vindos do Google Ads numa janela: todo contato cuja 1ª mensagem trouxe
+   * um gclid (capturado a partir de `since`). É o degrau "lead entrou" do funil
+   * offline — o ERP transforma isto no CSV "Lead (Conversas)" pro Google Ads.
+   */
+  @Get('ads-leads')
+  @ApiOperation({ summary: 'Contacts whose first message carried a Google Ads gclid, captured since a date' })
+  @ApiQuery({ name: 'since', required: true, description: 'ISO date/time (inclusive)' })
+  @ApiQuery({ name: 'limit', required: false, description: 'max rows (default 1000, max 5000)' })
+  async adsLeads(
+    @CurrentOrg('id') orgId: string,
+    @Query('since') since?: string,
+    @Query('limit') limit?: string,
+  ) {
+    const sinceDate = since ? new Date(since) : null;
+    if (!sinceDate || Number.isNaN(sinceDate.getTime())) {
+      throw new BadRequestException('since inválido (use ISO 8601)');
+    }
+    const take = Math.min(Math.max(parseInt(limit || '1000', 10) || 1000, 1), 5000);
+    // gclidCapturedAt é gravado como ISO string dentro do JSON de metadata (inbound
+    // processor); comparação textual de ISO em UTC ordena certo.
+    const rows = await this.prisma.$queryRaw<{ id: string; phone: string | null; gclid: string; captured_at: string }[]>`
+      SELECT id, phone,
+             metadata->>'gclid' AS gclid,
+             metadata->>'gclidCapturedAt' AS captured_at
+      FROM contacts
+      WHERE organization_id = ${orgId}
+        AND deleted_at IS NULL
+        AND metadata->>'gclid' IS NOT NULL
+        AND metadata->>'gclidCapturedAt' >= ${sinceDate.toISOString()}
+      ORDER BY metadata->>'gclidCapturedAt' ASC
+      LIMIT ${take}
+    `;
+    const leads = rows.map((r) => ({ id: r.id, phone: r.phone, gclid: r.gclid, gclidCapturedAt: r.captured_at }));
+    return { leads };
   }
 }
