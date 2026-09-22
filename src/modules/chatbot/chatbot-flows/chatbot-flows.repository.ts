@@ -45,15 +45,27 @@ export class ChatbotFlowsRepository {
 
   async replaceNodes(
     flowId: string,
-    nodes: { type: string; name?: string; positionX: number; positionY: number; data: any; edges: any }[],
+    nodes: { id?: string; type: string; name?: string; positionX: number; positionY: number; data: any; edges: any }[],
   ) {
+    // Os ids vêm do cliente (editor/seed) e são o que as edges referenciam
+    // (`targetNodeId`). Preservar o id é obrigatório — gerar um novo aqui
+    // quebrava todas as ligações do fluxo.
     await this.prisma.chatbotNode.deleteMany({ where: { flowId } });
     if (nodes.length === 0) return [];
 
     return this.prisma.$transaction(
       nodes.map((n) =>
         this.prisma.chatbotNode.create({
-          data: { flowId, type: n.type as any, name: n.name, positionX: n.positionX, positionY: n.positionY, data: n.data, edges: n.edges },
+          data: {
+            ...(n.id ? { id: n.id } : {}),
+            flowId,
+            type: n.type as any,
+            name: n.name,
+            positionX: n.positionX,
+            positionY: n.positionY,
+            data: n.data,
+            edges: n.edges,
+          },
         }),
       ),
     );

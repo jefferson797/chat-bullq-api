@@ -17,6 +17,7 @@ import { OutboxService } from '../../automations/outbox/outbox.service';
 import { WatchdogService } from '../../routing/watchdog/watchdog.service';
 import { SlaService } from '../../routing/sla/sla.service';
 import { AutoRepliesService } from '../../auto-replies/auto-replies.service';
+import { AutoAssignService } from './auto-assign.service';
 import {
   AutomationTrigger,
   ChannelType,
@@ -24,8 +25,6 @@ import {
   MessageContentType as PrismaContentType,
   MessageStatus,
   ConversationStatus,
-  AgentStatus,
-  DistributionRule,
   Prisma,
 } from '@prisma/client';
 
@@ -87,7 +86,6 @@ export class InboundMessageProcessor extends WorkerHost {
   private readonly followupNeeded = new Set<string>();
 
   /** Cursor de rodízio (round-robin) por org:setor, pro auto-assign. */
-  private readonly rrCursor = new Map<string, number>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -105,6 +103,7 @@ export class InboundMessageProcessor extends WorkerHost {
     private readonly watchdog: WatchdogService,
     private readonly sla: SlaService,
     private readonly autoReplies: AutoRepliesService,
+    private readonly autoAssign: AutoAssignService,
     @InjectQueue('chatbot-processor') private readonly chatbotQueue: Queue,
   ) {
     super();
@@ -266,10 +265,17 @@ export class InboundMessageProcessor extends WorkerHost {
 
       if (
         !isEcho &&
+        !message.isGroup &&
         (status === ConversationStatus.BOT ||
           status === ConversationStatus.PENDING)
       ) {
-        const hasActiveBot = await this.checkActiveBotForChannel(channelId);
+        const hasActiveBot = await this.shouldRouteToBot(
+          channelId,
+          conversationId,
+          contactId,
+          status,
+          isNewContact,
+        );
         if (hasActiveBot) {
           if (status === ConversationStatus.PENDING) {
             await this.prisma.conversation.update({
@@ -326,7 +332,7 @@ export class InboundMessageProcessor extends WorkerHost {
         );
         // Atribuição automática: manda o lead novo pra um vendedor (rodízio),
         // se ninguém pegou e a IA/bot não estão cuidando. Fire-and-forget.
-        this.maybeAutoAssign(conversationId, organizationId, channelId).catch(
+        this.autoAssign.maybeAutoAssign(conversationId, organizationId, channelId).catch(
           (err) =>
             this.logger.warn(
               `auto-assign failed conv ${conversationId}: ${err?.message ?? err}`,
@@ -436,120 +442,6 @@ export class InboundMessageProcessor extends WorkerHost {
    * (rotação) ou MENOS OCUPADO (menos conversas abertas). Atribui só o
    * vendedor (NÃO seta setor — triagem de setor é manual).
    */
-  private async maybeAutoAssign(
-    conversationId: string,
-    organizationId: string,
-    channelId: string,
-  ): Promise<void> {
-    const [org, channel, conv] = await Promise.all([
-      this.prisma.organization.findUnique({
-        where: { id: organizationId },
-        select: { aiEnabled: true },
-      }),
-      this.prisma.channel.findUnique({
-        where: { id: channelId },
-        select: { aiEnabled: true },
-      }),
-      this.prisma.conversation.findUnique({
-        where: { id: conversationId },
-        select: { assignedToId: true, status: true, isGroup: true },
-      }),
-    ]);
-    if (!conv || conv.assignedToId || conv.isGroup) return;
-    if (conv.status === ConversationStatus.BOT) return;
-    const aiOn =
-      channel?.aiEnabled === true ||
-      (channel?.aiEnabled !== false && org?.aiEnabled === true);
-    if (aiOn) return;
-
-    // Setor padrão = pool de roteamento. (Supervisores não devem estar nele.)
-    // A regra de distribuição do setor decide COMO escolher o vendedor.
-    const department = await this.prisma.department.findFirst({
-      where: { organizationId, deletedAt: null },
-      orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
-      select: { id: true, distributionRule: true },
-    });
-    if (!department) return;
-    // MANUAL = ninguém é atribuído automaticamente; fica na fila do setor
-    // pra alguém pegar. (Rodízio e Menos ocupado distribuem sozinhos.)
-    if (department.distributionRule === DistributionRule.MANUAL) return;
-
-    const where = (onlineOnly: boolean) => ({
-      departmentId: department.id,
-      isActive: true,
-      userOrganization: {
-        organizationId,
-        ...(onlineOnly ? { agentStatus: AgentStatus.ONLINE } : {}),
-      },
-    });
-    let agents = await this.prisma.departmentAgent.findMany({
-      where: where(true),
-      include: { userOrganization: { select: { userId: true } } },
-      orderBy: { id: 'asc' },
-    });
-    if (agents.length === 0) {
-      agents = await this.prisma.departmentAgent.findMany({
-        where: where(false),
-        include: { userOrganization: { select: { userId: true } } },
-        orderBy: { id: 'asc' },
-      });
-    }
-    if (agents.length === 0) return;
-
-    // Rotação base: cursor por org:setor. Usado direto no RODÍZIO e como
-    // desempate justo no MENOS OCUPADO (evita sempre cair no mesmo quando
-    // a carga empata).
-    const key = `${organizationId}:${department.id}`;
-    const cursor = this.rrCursor.get(key) ?? 0;
-    this.rrCursor.set(key, cursor + 1);
-    const rotated = agents.map((_, i) => agents[(cursor + i) % agents.length]);
-
-    let pick = rotated[0];
-    if (department.distributionRule === DistributionRule.LEAST_BUSY) {
-      // Menos ocupado: conta as conversas ABERTAS de cada candidato e pega
-      // quem tem menos (empate resolvido pela rotação acima).
-      const userIds = rotated.map((a) => a.userOrganization.userId);
-      const counts = await this.prisma.conversation.groupBy({
-        by: ['assignedToId'],
-        where: {
-          organizationId,
-          assignedToId: { in: userIds },
-          deletedAt: null,
-          status: {
-            in: [
-              ConversationStatus.PENDING,
-              ConversationStatus.OPEN,
-              ConversationStatus.WAITING,
-              ConversationStatus.BOT,
-            ],
-          },
-        },
-        _count: { _all: true },
-      });
-      const load = new Map(counts.map((c) => [c.assignedToId, c._count._all]));
-      let best = Infinity;
-      for (const a of rotated) {
-        const c = load.get(a.userOrganization.userId) ?? 0;
-        if (c < best) {
-          best = c;
-          pick = a;
-        }
-      }
-    }
-
-    await this.prisma.conversation.update({
-      where: { id: conversationId },
-      data: { assignedToId: pick.userOrganization.userId },
-    });
-    this.realtimeGateway.emitToChannel(channelId, 'conversation:updated', {
-      conversationId,
-      assignedToId: pick.userOrganization.userId,
-    });
-    this.logger.log(
-      `auto_assigned conv=${conversationId} -> user=${pick.userOrganization.userId}`,
-    );
-  }
-
   /**
    * Persists an inbound message OR merges into an existing row created by the
    * outbound path (which wrote the row with externalId BEFORE we saw the echo).
@@ -633,14 +525,50 @@ export class InboundMessageProcessor extends WorkerHost {
     }
   }
 
-  private async checkActiveBotForChannel(channelId: string): Promise<boolean> {
+  /**
+   * Decide se a mensagem vai pro chatbot de regras (triagem).
+   * - Sessão em andamento (status BOT): sempre continua.
+   * - Conversa PENDING: só se ninguém já pegou (sem dono) — depois que a
+   *   triagem transfere pra humano, a próxima mensagem NÃO pode cair no menu
+   *   de novo (era o loop que prendia o cliente).
+   * - `triggerConfig.onlyNewContacts` (padrão true): triagem só pra quem nunca
+   *   falou com a gente. Cliente recorrente que reabre conversa vai direto
+   *   pro vendedor.
+   */
+  private async shouldRouteToBot(
+    channelId: string,
+    conversationId: string,
+    contactId: string,
+    status: ConversationStatus,
+    isNewContact: boolean,
+  ): Promise<boolean> {
     const link = await this.prisma.chatbotFlowChannel.findFirst({
       where: {
         channelId,
         flow: { isActive: true, deletedAt: null },
       },
+      select: { flow: { select: { triggerConfig: true } } },
     });
-    return !!link;
+    if (!link) return false;
+    if (status === ConversationStatus.BOT) return true;
+
+    const conv = await this.prisma.conversation.findUnique({
+      where: { id: conversationId },
+      select: { assignedToId: true, metadata: true },
+    });
+    if (!conv || conv.assignedToId) return false;
+    const meta = (conv.metadata ?? {}) as Record<string, any>;
+    if (meta.botDone) return false; // triagem já aconteceu nesta conversa
+
+    const cfg = (link.flow.triggerConfig ?? {}) as Record<string, any>;
+    const onlyNew = cfg.onlyNewContacts !== false;
+    if (!onlyNew) return true;
+    if (isNewContact) return true;
+    // Contato antigo: só entra na triagem se nunca teve outra conversa.
+    const others = await this.prisma.conversation.count({
+      where: { contactId, id: { not: conversationId }, deletedAt: null },
+    });
+    return others === 0;
   }
 
   /**

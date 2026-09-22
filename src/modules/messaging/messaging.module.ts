@@ -11,6 +11,7 @@ import { ContactResolverService } from './pipeline/contact-resolver.service';
 import { ConversationResolverService } from './pipeline/conversation-resolver.service';
 import { HistoryImportService } from './pipeline/history-import.service';
 import { InboundMessageProcessor } from './pipeline/inbound-message.processor';
+import { AutoAssignService } from './pipeline/auto-assign.service';
 import { OutboundMessageProcessor } from './pipeline/outbound-message.processor';
 import { ConversationFsmService } from './conversations/conversation-fsm.service';
 import { ConversationsController } from './conversations/conversations.controller';
@@ -42,6 +43,7 @@ import { ContactsRepository } from './contacts/contacts.repository';
   ],
   controllers: [ConversationsController, MessagesController, ContactsController],
   providers: [
+    AutoAssignService,
     IdempotencyService,
     ContactResolverService,
     ConversationResolverService,
@@ -59,6 +61,6 @@ import { ContactsRepository } from './contacts/contacts.repository';
     ContactsService,
     ContactsRepository,
   ],
-  exports: [ConversationsService, MessagesService, ConversationFsmService, ContactsService, HistoryImportService, UploadsService],
+  exports: [AutoAssignService, ConversationsService, MessagesService, ConversationFsmService, ContactsService, HistoryImportService, UploadsService],
 })
 export class MessagingModule {}

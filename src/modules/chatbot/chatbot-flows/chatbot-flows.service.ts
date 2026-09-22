@@ -42,6 +42,7 @@ export class ChatbotFlowsService {
     return this.repository.replaceNodes(
       id,
       nodes.map((n) => ({
+        id: n.id,
         type: n.type,
         name: n.name,
         positionX: n.positionX,

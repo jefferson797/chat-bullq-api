@@ -1,4 +1,5 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
+import { MessagingModule } from '../messaging/messaging.module';
 import { BullModule } from '@nestjs/bullmq';
 import { ChatbotFlowsController } from './chatbot-flows/chatbot-flows.controller';
 import { ChatbotFlowsService } from './chatbot-flows/chatbot-flows.service';
@@ -18,6 +19,7 @@ import { TransferNodeExecutor } from './engine/node-executors/transfer-node.exec
       { name: 'chatbot-processor' },
       { name: 'outbound-messages' },
     ),
+    forwardRef(() => MessagingModule),
   ],
   controllers: [ChatbotFlowsController],
   providers: [
