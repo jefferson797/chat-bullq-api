@@ -263,6 +263,7 @@ export class InboundMessageProcessor extends WorkerHost {
         );
       }
 
+      let routedToBot = false;
       if (
         !isEcho &&
         !message.isGroup &&
@@ -299,6 +300,7 @@ export class InboundMessageProcessor extends WorkerHost {
               removeOnFail: false,
             },
           );
+          routedToBot = true;
           this.logger.log(`Routed to chatbot: conv=${conversationId}`);
         }
       }
@@ -364,8 +366,12 @@ export class InboundMessageProcessor extends WorkerHost {
             }
           }
           // Mensagens automáticas (saudação / almoço / fora de expediente).
-          // O próprio serviço ignora quando a IA está ativa pro canal.
-          await this.autoReplies.maybeSend(conversationId, organizationId);
+          // O próprio serviço ignora quando a IA está ativa pro canal. Com o
+          // chatbot conduzindo a conversa, ela também fica quieta — senão o
+          // cliente recebe o menu e "fora do horário" no mesmo segundo.
+          if (!routedToBot) {
+            await this.autoReplies.maybeSend(conversationId, organizationId);
+          }
           await this.tryAiAgent(conversationId, savedMessage.id);
         };
         dispatch().catch((err) =>
