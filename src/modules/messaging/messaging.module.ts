@@ -6,6 +6,7 @@ import { AiAgentsModule } from '../ai-agents/ai-agents.module';
 import { WatchdogModule } from '../routing/watchdog/watchdog.module';
 import { SlaModule } from '../routing/sla/sla.module';
 import { AutoRepliesModule } from '../auto-replies/auto-replies.module';
+import { ChatbotSessionModule } from '../chatbot/session/chatbot-session.module';
 import { IdempotencyService } from './pipeline/idempotency.service';
 import { ContactResolverService } from './pipeline/contact-resolver.service';
 import { ConversationResolverService } from './pipeline/conversation-resolver.service';
@@ -40,6 +41,7 @@ import { ContactsRepository } from './contacts/contacts.repository';
     WatchdogModule,
     SlaModule,
     AutoRepliesModule,
+    ChatbotSessionModule,
   ],
   controllers: [ConversationsController, MessagesController, ContactsController],
   providers: [

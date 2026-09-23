@@ -4,7 +4,7 @@ import { BullModule } from '@nestjs/bullmq';
 import { ChatbotFlowsController } from './chatbot-flows/chatbot-flows.controller';
 import { ChatbotFlowsService } from './chatbot-flows/chatbot-flows.service';
 import { ChatbotFlowsRepository } from './chatbot-flows/chatbot-flows.repository';
-import { ChatbotSessionService } from './session/chatbot-session.service';
+import { ChatbotSessionModule } from './session/chatbot-session.module';
 import { ChatbotEngineService } from './engine/chatbot-engine.service';
 import { ChatbotProcessor } from './engine/chatbot.processor';
 import { MessageNodeExecutor } from './engine/node-executors/message-node.executor';
@@ -19,13 +19,13 @@ import { TransferNodeExecutor } from './engine/node-executors/transfer-node.exec
       { name: 'chatbot-processor' },
       { name: 'outbound-messages' },
     ),
+    ChatbotSessionModule,
     forwardRef(() => MessagingModule),
   ],
   controllers: [ChatbotFlowsController],
   providers: [
     ChatbotFlowsService,
     ChatbotFlowsRepository,
-    ChatbotSessionService,
     ChatbotEngineService,
     ChatbotProcessor,
     MessageNodeExecutor,
@@ -34,6 +34,6 @@ import { TransferNodeExecutor } from './engine/node-executors/transfer-node.exec
     WaitNodeExecutor,
     TransferNodeExecutor,
   ],
-  exports: [ChatbotFlowsService, ChatbotFlowsRepository, ChatbotSessionService],
+  exports: [ChatbotFlowsService, ChatbotFlowsRepository, ChatbotSessionModule],
 })
 export class ChatbotModule {}

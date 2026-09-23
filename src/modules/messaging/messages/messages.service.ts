@@ -8,6 +8,7 @@ import {
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import {
+  ConversationStatus,
   MessageDirection,
   MessageContentType,
   MessageStatus,
@@ -25,6 +26,8 @@ import {
 import { WatchdogService } from '../../routing/watchdog/watchdog.service';
 import { SlaService } from '../../routing/sla/sla.service';
 import { ChannelAdapterRegistry } from '../../channel-hub/channel-adapter.registry';
+import { ChatbotSessionService } from '../../chatbot/session/chatbot-session.service';
+import { botTimeoutJobId } from '../../chatbot/engine/bot-timeout.constants';
 
 @Injectable()
 export class MessagesService {
@@ -40,6 +43,8 @@ export class MessagesService {
     private readonly adapterRegistry: ChannelAdapterRegistry,
     private readonly mediaResolver: MediaResolverService,
     @InjectQueue('outbound-messages') private readonly outboundQueue: Queue,
+    @InjectQueue('chatbot-processor') private readonly chatbotQueue: Queue,
+    private readonly botSession: ChatbotSessionService,
   ) {}
 
   async send(
@@ -182,16 +187,38 @@ export class MessagesService {
     // conversation, the seller's queue would bleed into the boss's name.
     // The conversation stays with the current assignee (or unassigned, where
     // the next inbound auto-assign picks it up).
+    //
+    // Exceção da exceção: conversa SEM dono não tem de quem roubar. Se o
+    // supervisor não a assumisse, ela ficaria órfã mesmo com alguém
+    // respondendo (foi o que aconteceu em 22/09, quando quem atende usa a
+    // conta OWNER: respondia e a conversa continuava do robô, sem dono).
     const isSupervisor =
       membership?.role === OrgRole.OWNER || membership?.role === OrgRole.ADMIN;
     const shouldAutoAssign =
-      !isSupervisor && conversation.assignedToId !== senderId;
+      conversation.assignedToId !== senderId &&
+      (!isSupervisor || !conversation.assignedToId);
+
+    // Humano falou dentro de uma conversa que ainda estava com o robô: o robô
+    // sai de cena. Sem isso a conversa fica em BOT pra sempre — fora da fila,
+    // e a próxima mensagem do cliente voltaria pro menu.
+    const takingOverFromBot = conversation.status === ConversationStatus.BOT;
+    const botMeta = takingOverFromBot
+      ? {
+          metadata: {
+            ...((conversation.metadata ?? {}) as Record<string, any>),
+            botDone: true,
+            botDoneAt: new Date().toISOString(),
+            botOutcome: 'human_takeover',
+          },
+        }
+      : {};
 
     await this.prisma.conversation.update({
       where: { id: conversation.id },
       data: {
         lastMessageAt: new Date(),
         ...(shouldAutoAssign ? { assignedToId: senderId } : {}),
+        ...(takingOverFromBot ? { status: ConversationStatus.OPEN, ...botMeta } : {}),
         ...(shouldDisableAi
           ? {
               aiEnabled: false,
@@ -202,6 +229,26 @@ export class MessagesService {
           : {}),
       },
     });
+
+    if (takingOverFromBot) {
+      // Encerra a sessão do robô no Redis e cancela o timeout agendado, senão
+      // o worker ainda transferiria a conversa "de novo" minutos depois.
+      await Promise.all([
+        this.botSession.destroy(conversation.id).catch(() => undefined),
+        this.chatbotQueue.remove(botTimeoutJobId(conversation.id)).catch(() => undefined),
+        this.prisma.conversationAuditLog.create({
+          data: {
+            conversationId: conversation.id,
+            actorId: senderId,
+            action: 'STATUS_CHANGED',
+            fromValue: ConversationStatus.BOT,
+            toValue: ConversationStatus.OPEN,
+            metadata: { trigger: 'human_takeover' },
+          },
+        }),
+      ]);
+      this.logger.log(`Humano assumiu conversa do robô: conv=${conversation.id} user=${senderId}`);
+    }
 
     // Humano respondeu — cancela qualquer timer de watchdog pendente e
     // zera o contador de tentativas. Se a IA estava paralisada e quem
