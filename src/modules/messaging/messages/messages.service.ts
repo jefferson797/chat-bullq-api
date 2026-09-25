@@ -213,11 +213,22 @@ export class MessagesService {
         }
       : {};
 
+    // Primeira resposta humana da conversa. Até 25/09/2026 só o `fsm.assign`
+    // carimbava isso, e ele só roda quando a atribuição muda PENDING→OPEN —
+    // como o auto-assign atribui sem mexer no status, o campo ficava sempre
+    // nulo: painel mostrava 0% de primeira resposta e o SLA nunca fechava.
+    // Quem responde é quem cumpre o SLA, então é aqui que o carimbo pertence.
+    const primeiraResposta = !conversation.firstResponseAt;
+    const saindoDaFila = conversation.status === ConversationStatus.PENDING;
+
     await this.prisma.conversation.update({
       where: { id: conversation.id },
       data: {
         lastMessageAt: new Date(),
         ...(shouldAutoAssign ? { assignedToId: senderId } : {}),
+        ...(primeiraResposta ? { firstResponseAt: new Date() } : {}),
+        // humano respondeu ⇒ a conversa está em andamento, não mais na fila
+        ...(saindoDaFila ? { status: ConversationStatus.OPEN } : {}),
         ...(takingOverFromBot ? { status: ConversationStatus.OPEN, ...botMeta } : {}),
         ...(shouldDisableAi
           ? {
@@ -229,6 +240,21 @@ export class MessagesService {
           : {}),
       },
     });
+
+    if (saindoDaFila && !takingOverFromBot) {
+      await this.prisma.conversationAuditLog
+        .create({
+          data: {
+            conversationId: conversation.id,
+            actorId: senderId,
+            action: 'STATUS_CHANGED',
+            fromValue: ConversationStatus.PENDING,
+            toValue: ConversationStatus.OPEN,
+            metadata: { trigger: 'human_reply' },
+          },
+        })
+        .catch(() => undefined);
+    }
 
     if (takingOverFromBot) {
       // Encerra a sessão do robô no Redis e cancela o timeout agendado, senão

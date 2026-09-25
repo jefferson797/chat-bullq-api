@@ -57,7 +57,7 @@ const nodes = [
   },
   {
     id: N.impressaoMsg, type: 'MESSAGE', name: 'Impressão: instruções', positionX: -220, positionY: 260,
-    data: { message: 'Perfeito! Trabalhamos a partir de meio metro (R$ 39/m). Me manda a arte e a quantidade que já te passo valor e prazo. 🙂' },
+    data: { message: 'Perfeito! Só impressão DTF é R$ 39 o metro, a partir de meio metro. Pra já fechar seu orçamento, me manda aqui:\n\n1. a arte (PNG ou PDF, de preferência com fundo transparente)\n2. quantos metros — ou o tamanho da estampa e quantas peças\n\nCom isso eu te passo valor e prazo. 🙂' },
     edges: [{ targetNodeId: N.impressaoTransfer }],
   },
   { id: N.impressaoTransfer, type: 'TRANSFER', name: 'Humano (impressão)', positionX: -220, positionY: 380, data: { message: '' }, edges: [] },
@@ -79,7 +79,7 @@ const nodes = [
   },
   {
     id: N.camisetaOkMsg, type: 'MESSAGE', name: 'Camiseta ok', positionX: 120, positionY: 400,
-    data: { message: 'Ótimo! Me manda a arte, a quantidade por tamanho e a cor da camiseta que já monto o orçamento. 🙂' },
+    data: { message: 'Ótimo! Pra já montar seu orçamento, me manda aqui:\n\n1. a arte (PNG ou PDF)\n2. a quantidade por tamanho (P, M, G, GG)\n3. a cor da camiseta\n\nCom isso eu te passo valor e prazo. 🙂' },
     edges: [{ targetNodeId: N.camisetaOkTransfer }],
   },
   { id: N.camisetaOkTransfer, type: 'TRANSFER', name: 'Humano (camiseta)', positionX: 120, positionY: 520, data: { message: '' }, edges: [] },

@@ -30,7 +30,7 @@ export class SlaService {
     if (!conversation) return;
     if (conversation.firstResponseAt || conversation.status === ConversationStatus.CLOSED) return;
 
-    const slaMinutes = conversation.department?.slaFirstResponse;
+    const slaMinutes = await this.slaMinutesFor(conversation.department?.slaFirstResponse, organizationId, 'slaFirstResponse');
     if (!slaMinutes || slaMinutes <= 0) return;
 
     await this.slaQueue.add(
@@ -54,7 +54,7 @@ export class SlaService {
     if (!conversation) return;
     if (conversation.status === ConversationStatus.CLOSED) return;
 
-    const slaMinutes = conversation.department?.slaResolution;
+    const slaMinutes = await this.slaMinutesFor(conversation.department?.slaResolution, organizationId, 'slaResolution');
     if (!slaMinutes || slaMinutes <= 0) return;
 
     await this.slaQueue.add(
@@ -64,6 +64,27 @@ export class SlaService {
     );
 
     this.logger.log(`SLA resolution timer set: ${slaMinutes}min for conv=${conversationId}`);
+  }
+
+  /**
+   * SLA da conversa, em MINUTOS. A conversa raramente tem setor: o auto-assign
+   * atribui o vendedor mas deixa `departmentId` nulo de propósito (setor é
+   * decisão manual). Sem este fallback pro setor padrão da empresa, nenhum
+   * timer era armado e o SLA ficava morto — foi o que aconteceu até 25/09/2026.
+   */
+  private async slaMinutesFor(
+    doSetor: number | null | undefined,
+    organizationId: string,
+    campo: 'slaFirstResponse' | 'slaResolution',
+  ): Promise<number | null> {
+    if (doSetor && doSetor > 0) return doSetor;
+    const padrao = await this.prisma.department.findFirst({
+      where: { organizationId, deletedAt: null },
+      orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
+      select: { slaFirstResponse: true, slaResolution: true },
+    });
+    const v = padrao?.[campo];
+    return v && v > 0 ? v : null;
   }
 
   /**
