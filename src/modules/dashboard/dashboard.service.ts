@@ -47,10 +47,12 @@ export class DashboardService {
       }),
     ]);
 
-    const [avgFirstResponse, prevAvgFirstResponse] = await Promise.all([
-      this.getAvgFirstResponseTime(organizationId, range),
-      this.getAvgFirstResponseTime(organizationId, { from: prevFrom, to: range.from }),
+    const [firstResponse, prevFirstResponse] = await Promise.all([
+      this.getFirstResponseStats(organizationId, range),
+      this.getFirstResponseStats(organizationId, { from: prevFrom, to: range.from }),
     ]);
+    const avgFirstResponse = firstResponse.median;
+    const prevAvgFirstResponse = prevFirstResponse.median;
     const avgResolution = await this.getAvgResolutionTime(organizationId, range);
     const [slaCompliance, prevSlaCompliance] = await Promise.all([
       this.getSlaCompliance(organizationId, range),
@@ -105,7 +107,10 @@ export class DashboardService {
       },
       stuckConversations,
 
+      // é a MEDIANA (ver getFirstResponseStats); nome mantido pra não quebrar a UI
       avgFirstResponseMinutes: avgFirstResponse,
+      firstResponseP90Minutes: firstResponse.p90,
+      firstResponseSample: firstResponse.count,
       avgFirstResponseTrend:
         avgFirstResponse !== null && prevAvgFirstResponse !== null
           ? this.calcTrend(avgFirstResponse, prevAvgFirstResponse)
@@ -161,10 +166,10 @@ export class DashboardService {
     const dayKeys = this.eachDay(range.from, range.to);
     const buckets = new Map<
       string,
-      { created: number; closed: number; tmrSum: number; tmrCount: number; slaWithin: number; slaCount: number }
+      { created: number; closed: number; tmr: number[]; slaWithin: number; slaCount: number }
     >();
     for (const k of dayKeys) {
-      buckets.set(k, { created: 0, closed: 0, tmrSum: 0, tmrCount: 0, slaWithin: 0, slaCount: 0 });
+      buckets.set(k, { created: 0, closed: 0, tmr: [], slaWithin: 0, slaCount: 0 });
     }
 
     for (const c of conversations) {
@@ -174,8 +179,7 @@ export class DashboardService {
       b.created++;
       if (c.firstResponseAt) {
         const minutes = (c.firstResponseAt.getTime() - c.createdAt.getTime()) / 60000;
-        b.tmrSum += minutes;
-        b.tmrCount++;
+        b.tmr.push(minutes);
         if (slaMinutes !== null) {
           b.slaCount++;
           if (minutes <= slaMinutes) b.slaWithin++;
@@ -189,7 +193,12 @@ export class DashboardService {
     const active = dayKeys.map((d) => ({ date: d, value: buckets.get(d)!.created }));
     const firstResponse = dayKeys.map((d) => {
       const b = buckets.get(d)!;
-      return { date: d, value: b.tmrCount > 0 ? Math.round(b.tmrSum / b.tmrCount) : 0 };
+      // mediana do dia, pelo mesmo motivo do cartão: um esquecido não pode virar a linha toda
+      if (b.tmr.length === 0) return { date: d, value: 0 };
+      const ord = [...b.tmr].sort((x, y) => x - y);
+      const meio = Math.floor(ord.length / 2);
+      const med = ord.length % 2 ? ord[meio] : (ord[meio - 1] + ord[meio]) / 2;
+      return { date: d, value: Math.round(med) };
     });
     const sla = dayKeys.map((d) => {
       const b = buckets.get(d)!;
@@ -563,18 +572,42 @@ export class DashboardService {
       .slice(0, limit);
   }
 
-  private async getAvgFirstResponseTime(organizationId: string, range: DateRange): Promise<number | null> {
+  /**
+   * Tempo de 1ª resposta: MEDIANA, não média.
+   *
+   * Média não serve aqui. Em 25/09/2026, no Exatek: mediana 38 min, média 6.391 min
+   * — duas conversas esquecidas (a pior, 29 dias) sozinhas decidiam o número, e o
+   * painel dizia "4 dias" num dia em que quase todo mundo foi atendido em meia hora.
+   * A mediana responde a pergunta que interessa: quanto espera o cliente típico.
+   * O pior caso não some — ele aparece em `p90` e na lista de conversas presas.
+   */
+  private async getFirstResponseStats(
+    organizationId: string,
+    range: DateRange,
+  ): Promise<{ median: number | null; mean: number | null; p90: number | null; count: number }> {
     const convs = await this.prisma.conversation.findMany({
       where: {
         organizationId,
         firstResponseAt: { not: null },
         createdAt: { gte: range.from, lte: range.to },
+        isGroup: false,
+        deletedAt: null,
       },
       select: { createdAt: true, firstResponseAt: true },
     });
-    if (convs.length === 0) return null;
-    const total = convs.reduce((s, c) => s + (c.firstResponseAt!.getTime() - c.createdAt.getTime()), 0);
-    return Math.round(total / convs.length / 60000);
+    const mins = convs
+      .map((c) => (c.firstResponseAt!.getTime() - c.createdAt.getTime()) / 60000)
+      .filter((m) => m >= 0)
+      .sort((a, b) => a - b);
+    if (mins.length === 0) return { median: null, mean: null, p90: null, count: 0 };
+    const meio = Math.floor(mins.length / 2);
+    const median = mins.length % 2 ? mins[meio] : (mins[meio - 1] + mins[meio]) / 2;
+    return {
+      median: Math.round(median),
+      mean: Math.round(mins.reduce((s, m) => s + m, 0) / mins.length),
+      p90: Math.round(mins[Math.max(0, Math.ceil(mins.length * 0.9) - 1)]),
+      count: mins.length,
+    };
   }
 
   private async getAvgResolutionTime(organizationId: string, range: DateRange): Promise<number | null> {
