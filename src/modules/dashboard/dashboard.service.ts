@@ -56,6 +56,10 @@ export class DashboardService {
       this.getSlaCompliance(organizationId, range),
       this.getSlaCompliance(organizationId, { from: prevFrom, to: range.from }),
     ]);
+    const [conversao, prevConversao] = await Promise.all([
+      this.getConversionRate(organizationId, range),
+      this.getConversionRate(organizationId, { from: prevFrom, to: range.from }),
+    ]);
 
     const [closedNoReopen, csatAgg, prevCsatAgg] = await Promise.all([
       this.prisma.conversation.count({
@@ -106,6 +110,14 @@ export class DashboardService {
         avgFirstResponse !== null && prevAvgFirstResponse !== null
           ? this.calcTrend(avgFirstResponse, prevAvgFirstResponse)
           : 0,
+
+      conversionRatePercent: conversao.percent,
+      conversionTrend:
+        conversao.percent !== null && prevConversao.percent !== null
+          ? conversao.percent - prevConversao.percent
+          : 0,
+      conversionConversations: conversao.conversations,
+      conversionConverted: conversao.converted,
 
       slaCompliancePercent: slaCompliance,
       slaTrend:
@@ -602,6 +614,43 @@ export class DashboardService {
     ).length;
 
     return Math.round((withinSla / convs.length) * 100);
+  }
+
+  /**
+   * Taxa de conversão: de cada 100 conversas que começaram no período, quantas
+   * viraram pedido. A compra é registrada no contato pelo ERP
+   * (`POST /public/contacts/:id/compra` → `metadata.primeiraCompraEm`), porque a
+   * pessoa pode ter conversado três vezes antes de fechar.
+   *
+   * Só conta compra que veio DEPOIS da conversa começar — senão cliente antigo
+   * que volta a falar apareceria como conversão nova e inflaria tudo.
+   * Conversa de grupo fica de fora: não é lead.
+   */
+  private async getConversionRate(
+    organizationId: string,
+    range: DateRange,
+  ): Promise<{ percent: number | null; conversations: number; converted: number }> {
+    const rows = await this.prisma.$queryRaw<{ total: bigint; convertidas: bigint }[]>`
+      SELECT count(*) AS total,
+             count(*) FILTER (
+               WHERE ct.metadata->>'primeiraCompraEm' IS NOT NULL
+                 AND (ct.metadata->>'primeiraCompraEm')::timestamptz >= c.created_at
+             ) AS convertidas
+      FROM conversations c
+      JOIN contacts ct ON ct.id = c.contact_id
+      WHERE c.organization_id = ${organizationId}
+        AND c.deleted_at IS NULL
+        AND c.is_group = false
+        AND c.created_at >= ${range.from}
+        AND c.created_at <= ${range.to}
+    `;
+    const total = Number(rows[0]?.total ?? 0);
+    const convertidas = Number(rows[0]?.convertidas ?? 0);
+    return {
+      percent: total > 0 ? Math.round((convertidas / total) * 100) : null,
+      conversations: total,
+      converted: convertidas,
+    };
   }
 
   private calcTrend(current: number, previous: number): number {

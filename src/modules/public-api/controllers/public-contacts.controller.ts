@@ -1,9 +1,10 @@
-import { BadRequestException, Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, NotFoundException, Param, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiQuery, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import { Prisma } from '@prisma/client';
 import { ApiKeyAuthGuard } from '../../../common/guards';
 import { CurrentOrg } from '../../../common/decorators';
 import { PrismaService } from '../../../database/prisma.service';
+import { RegistrarCompraDto } from '../dto/registrar-compra.dto';
 
 /**
  * Lista de contatos da organização para CRM/ERP externo (ex.: Exatek) importar.
@@ -115,5 +116,51 @@ export class PublicContactsController {
     `;
     const leads = rows.map((r) => ({ id: r.id, phone: r.phone, gclid: r.gclid, gclidCapturedAt: r.captured_at }));
     return { leads };
+  }
+
+  /**
+   * O ERP avisa que este contato comprou. É o que fecha o funil: sem isso o
+   * Conversas sabe quantas conversas entraram, mas não quantas viraram pedido.
+   *
+   * Guardamos no contato (não na conversa) porque a compra é da pessoa: ela pode
+   * ter conversado três vezes antes de fechar. `primeiraCompraEm` nunca é
+   * sobrescrita — é ela que define a taxa de conversão de uma conversa.
+   * Idempotente por número de pedido: reenviar o mesmo pedido não conta de novo.
+   */
+  @Post(':id/compra')
+  @ApiOperation({ summary: 'Register that this contact placed an order (closes the funnel)' })
+  async registrarCompra(
+    @CurrentOrg('id') orgId: string,
+    @Param('id') id: string,
+    @Body() dto: RegistrarCompraDto,
+  ) {
+    const contact = await this.prisma.contact.findFirst({
+      where: { id, organizationId: orgId, deletedAt: null },
+      select: { id: true, metadata: true },
+    });
+    if (!contact) throw new NotFoundException('Contato não encontrado nesta organização');
+
+    const meta = (contact.metadata ?? {}) as Record<string, any>;
+    const pedidos: string[] = Array.isArray(meta.pedidos) ? meta.pedidos : [];
+    if (dto.pedido && pedidos.includes(dto.pedido)) {
+      return { ok: true, jaRegistrado: true, pedidos: pedidos.length };
+    }
+
+    const em = dto.em ? new Date(dto.em) : new Date();
+    if (Number.isNaN(em.getTime())) throw new BadRequestException('em inválido (use ISO 8601)');
+
+    await this.prisma.contact.update({
+      where: { id: contact.id },
+      data: {
+        metadata: {
+          ...meta,
+          pedidos: dto.pedido ? [...pedidos, dto.pedido] : pedidos,
+          primeiraCompraEm: meta.primeiraCompraEm ?? em.toISOString(),
+          ultimaCompraEm: em.toISOString(),
+          ultimoPedidoValor: dto.valor ?? meta.ultimoPedidoValor ?? null,
+        },
+      },
+    });
+    return { ok: true, jaRegistrado: false, pedidos: pedidos.length + (dto.pedido ? 1 : 0) };
   }
 }
