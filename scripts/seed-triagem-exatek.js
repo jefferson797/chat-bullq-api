@@ -57,7 +57,7 @@ const nodes = [
   },
   {
     id: N.impressaoMsg, type: 'MESSAGE', name: 'Impressão: instruções', positionX: -220, positionY: 260,
-    data: { message: 'Perfeito! Só impressão DTF é R$ 39 o metro, a partir de meio metro. Pra já fechar seu orçamento, me manda aqui:\n\n1. a arte (PNG ou PDF, de preferência com fundo transparente)\n2. quantos metros — ou o tamanho da estampa e quantas peças\n\nCom isso eu te passo valor e prazo. 🙂' },
+    data: { message: 'Perfeito! Impressão DTF têxtil, a partir de meio metro. O metro fica mais barato conforme a metragem:\n\n• 1 a 5 m — R$ 39/m\n• 6 a 10 m — R$ 33/m\n• 11 a 19 m — R$ 30/m\n• 20 a 49 m — R$ 28/m\n• 50 m ou mais — R$ 25/m\n\nPra já fechar seu orçamento, me manda:\n\n1. a arte (PNG ou PDF, de preferência com fundo transparente)\n2. quantos metros — ou o tamanho da estampa e quantas peças\n\nCom isso eu te passo valor e prazo. 🙂' },
     edges: [{ targetNodeId: N.impressaoTransfer }],
   },
   { id: N.impressaoTransfer, type: 'TRANSFER', name: 'Humano (impressão)', positionX: -220, positionY: 380, data: { message: '' }, edges: [] },

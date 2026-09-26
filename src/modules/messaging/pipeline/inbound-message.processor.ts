@@ -263,6 +263,16 @@ export class InboundMessageProcessor extends WorkerHost {
         );
       }
 
+      // Cliente voltou a escrever numa conversa arquivada: desarquiva. Arquivar
+      // é "guardar o que esfriou", não "parar de atender" — sem isto a mensagem
+      // chega, fica invisível na caixa e ninguém responde. Só mensagem real do
+      // cliente desarquiva (echo é a nossa própria mensagem voltando).
+      if (!isEcho && direction === MessageDirection.INBOUND) {
+        this.unarchiveOnInbound(conversationId).catch((err) =>
+          this.logger.warn(`unarchive falhou conv=${conversationId}: ${err?.message ?? err}`),
+        );
+      }
+
       let routedToBot = false;
       if (
         !isEcho &&
@@ -575,6 +585,37 @@ export class InboundMessageProcessor extends WorkerHost {
       where: { contactId, id: { not: conversationId }, deletedAt: null },
     });
     return others === 0;
+  }
+
+  /**
+   * Tira a conversa do arquivo quando o cliente escreve de novo. O status
+   * (PENDING/OPEN/CLOSED) não é tocado — arquivo é ortogonal a status, então
+   * ela reaparece exatamente onde estava na caixa. Fica registrado na auditoria
+   * pra ninguém achar que a conversa "voltou sozinha" por mágica.
+   */
+  private async unarchiveOnInbound(conversationId: string): Promise<void> {
+    const conv = await this.prisma.conversation.findUnique({
+      where: { id: conversationId },
+      select: { isArchived: true },
+    });
+    if (!conv?.isArchived) return;
+
+    await this.prisma.conversation.update({
+      where: { id: conversationId },
+      data: { isArchived: false, archivedAt: null, archivedById: null },
+    });
+    await this.prisma.conversationAuditLog.create({
+      data: {
+        conversationId,
+        action: 'UNARCHIVED',
+        metadata: { trigger: 'inbound_message' },
+      },
+    });
+    this.realtimeGateway.emitToConversation(conversationId, 'conversation:updated', {
+      conversationId,
+      isArchived: false,
+    });
+    this.logger.log(`Conversa desarquivada por mensagem do cliente: ${conversationId}`);
   }
 
   /**
