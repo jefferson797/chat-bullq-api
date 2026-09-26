@@ -12,6 +12,7 @@ export class DashboardService {
 
   async getOverview(organizationId: string, range: DateRange) {
     const where = { organizationId, createdAt: { gte: range.from, lte: range.to } };
+    const naCaixa = { organizationId, isArchived: false, deletedAt: null };
     const prevFrom = new Date(range.from.getTime() - (range.to.getTime() - range.from.getTime()));
     const prevWhere = { organizationId, createdAt: { gte: prevFrom, lte: range.from } };
 
@@ -30,10 +31,13 @@ export class DashboardService {
     ] = await this.prisma.$transaction([
       this.prisma.conversation.count({ where }),
       this.prisma.conversation.count({ where: prevWhere }),
-      this.prisma.conversation.count({ where: { organizationId, status: 'OPEN' } }),
-      this.prisma.conversation.count({ where: { organizationId, status: 'PENDING' } }),
-      this.prisma.conversation.count({ where: { organizationId, status: 'WAITING' } }),
-      this.prisma.conversation.count({ where: { organizationId, status: 'BOT' } }),
+      // "Ativas" = o que está de fato na caixa AGORA. Arquivada e apagada não
+      // contam: em 26/09/2026 o cartão mostrava 1.091 logo depois de arquivar
+      // 521 conversas frias, porque a contagem olhava só o status.
+      this.prisma.conversation.count({ where: { ...naCaixa, status: 'OPEN' } }),
+      this.prisma.conversation.count({ where: { ...naCaixa, status: 'PENDING' } }),
+      this.prisma.conversation.count({ where: { ...naCaixa, status: 'WAITING' } }),
+      this.prisma.conversation.count({ where: { ...naCaixa, status: 'BOT' } }),
       this.prisma.conversation.count({
         where: { organizationId, isStuck: true, deletedAt: null },
       }),
