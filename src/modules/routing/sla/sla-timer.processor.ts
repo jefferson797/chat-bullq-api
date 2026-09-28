@@ -1,10 +1,12 @@
-import { Processor, WorkerHost } from '@nestjs/bullmq';
+import { InjectQueue, Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
-import { Job } from 'bullmq';
+import { Job, Queue } from 'bullmq';
 import { ConversationStatus, NotificationType } from '@prisma/client';
 import { PrismaService } from '../../../database/prisma.service';
 import { NotificationsService } from '../../notifications/notifications.service';
 import { contactDisplayTitle } from '../../../common/utils/contact-display.util';
+import { AutoRepliesService } from '../../auto-replies/auto-replies.service';
+import { dentroDoExpediente, msAteAbrir } from './business-hours.util';
 
 @Processor('sla-timers', { concurrency: 2 })
 export class SlaTimerProcessor extends WorkerHost {
@@ -13,6 +15,8 @@ export class SlaTimerProcessor extends WorkerHost {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notifications: NotificationsService,
+    private readonly autoReplies: AutoRepliesService,
+    @InjectQueue('sla-timers') private readonly slaQueue: Queue,
   ) {
     super();
   }
@@ -34,6 +38,22 @@ export class SlaTimerProcessor extends WorkerHost {
     if (type === 'first-response') {
       if (conversation.firstResponseAt || conversation.status === ConversationStatus.CLOSED) {
         return { skipped: true, reason: 'already_responded_or_closed' };
+      }
+
+      // Alerta fora do expediente não é alerta: ninguém pode agir, e o sino
+      // amanhece cheio de coisa que a pessoa não deixou de fazer. Reagenda pra
+      // abertura (o relógio do SLA só corre quando tem gente pra atender).
+      const espera = await this.esperaAteExpediente(organizationId);
+      if (espera !== null) {
+        await this.slaQueue.add(
+          'sla-check',
+          { conversationId, type, organizationId },
+          { delay: espera, jobId: `sla-fr-${conversationId}` },
+        );
+        this.logger.log(
+          `SLA fora do expediente: conv=${conversationId} reagendado para daqui a ${Math.round(espera / 60000)} min`,
+        );
+        return { rescheduled: true, inMinutes: Math.round(espera / 60000) };
       }
 
       const contactName = contactDisplayTitle(conversation.contact);
@@ -82,5 +102,25 @@ export class SlaTimerProcessor extends WorkerHost {
     }
 
     return { skipped: true, reason: 'unknown_type' };
+  }
+
+  /**
+   * Milissegundos até a empresa abrir, ou `null` quando já está aberta (ou
+   * quando não há horário configurado — aí é melhor avisar na hora do que
+   * nunca avisar). Usa o mesmo horário comercial das respostas automáticas,
+   * pra não existirem dois "horários da empresa" divergindo em silêncio.
+   */
+  private async esperaAteExpediente(organizationId: string): Promise<number | null> {
+    try {
+      const config = await this.autoReplies.getConfig(organizationId);
+      if (!config?.businessHours) return null;
+      if (dentroDoExpediente(config)) return null;
+      const espera = msAteAbrir(config);
+      // margem de 1 min: o job não pode acordar no instante exato da abertura
+      return espera === null ? null : espera + 60_000;
+    } catch (err: any) {
+      this.logger.warn(`não consegui ler o horário comercial: ${err?.message ?? err}`);
+      return null;
+    }
   }
 }

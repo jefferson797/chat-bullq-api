@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
 import { NotificationsModule } from '../../notifications/notifications.module';
+import { AutoRepliesModule } from '../../auto-replies/auto-replies.module';
 import { SlaService } from './sla.service';
 import { SlaTimerProcessor } from './sla-timer.processor';
 
@@ -22,6 +23,7 @@ import { SlaTimerProcessor } from './sla-timer.processor';
   imports: [
     BullModule.registerQueue({ name: 'sla-timers' }),
     NotificationsModule,
+    AutoRepliesModule,
   ],
   providers: [SlaService, SlaTimerProcessor],
   exports: [SlaService, BullModule],
