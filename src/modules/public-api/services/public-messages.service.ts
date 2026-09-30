@@ -146,10 +146,33 @@ export class PublicMessagesService {
       },
     });
 
+    // Se a conversa estava arquivada, ela volta pra caixa. Sem isso a gente fala
+    // com o cliente num lugar que ninguém está olhando: em 30/09 a recompra mandou
+    // mensagem pra uma cliente sumida há 83 dias, cuja conversa tinha sido arquivada
+    // no lote dos 60 dias — a mensagem saiu, mas o atendimento não via.
+    const antes = await this.prisma.conversation.findUnique({
+      where: { id: conversationId },
+      select: { isArchived: true },
+    });
     await this.prisma.conversation.update({
       where: { id: conversationId },
-      data: { lastMessageAt: new Date() },
+      data: {
+        lastMessageAt: new Date(),
+        ...(antes?.isArchived
+          ? { isArchived: false, archivedAt: null, archivedById: null }
+          : {}),
+      },
     });
+    if (antes?.isArchived) {
+      await this.prisma.conversationAuditLog.create({
+        data: {
+          conversationId,
+          action: 'CONVERSATION_UNARCHIVED',
+          metadata: { trigger: 'public_api_outbound' },
+        },
+      });
+      this.logger.log(`Conversa ${conversationId} desarquivada por envio da API pública.`);
+    }
 
     await this.outboundQueue.add(
       'send-outbound',
