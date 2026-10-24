@@ -5,6 +5,8 @@ import { PublicDashboardController } from './controllers/public-dashboard.contro
 import { PublicContactsController } from './controllers/public-contacts.controller';
 import { PublicMessagesController } from './controllers/public-messages.controller';
 import { PublicMessagesService } from './services/public-messages.service';
+import { PublicInboxController } from './controllers/public-inbox.controller';
+import { PublicInboxService } from './services/public-inbox.service';
 import { DashboardModule } from '../dashboard/dashboard.module';
 import { AuthModule } from '../auth/auth.module';
 
@@ -19,7 +21,8 @@ import { AuthModule } from '../auth/auth.module';
     PublicDashboardController,
     PublicContactsController,
     PublicMessagesController,
+    PublicInboxController,
   ],
-  providers: [PublicMessagesService],
+  providers: [PublicMessagesService, PublicInboxService],
 })
 export class PublicApiModule {}
