@@ -240,6 +240,17 @@ export class AuthService {
       throw new UnauthorizedException('Account is deactivated');
     }
 
+    this.logger.log(`User logged in: ${user.email}`);
+    return this.montarSessao(user);
+  }
+
+  /**
+   * A sessão que o front recebe. Vale para QUALQUER porta de entrada: senha
+   * daqui ou login único do TunerID. Está num método só de propósito — duas
+   * cópias disto é garantir que um dia elas divergem, e aí uma das portas
+   * passa a devolver permissão diferente da outra.
+   */
+  private async montarSessao(user: { id: string; email: string } & Record<string, any>) {
     const memberships = await this.prisma.userOrganization.findMany({
       where: { userId: user.id },
       include: {
@@ -250,10 +261,8 @@ export class AuthService {
 
     const tokens = await this.generateTokens(user.id, user.email);
 
-    this.logger.log(`User logged in: ${user.email}`);
-
     return {
-      user: this.sanitizeUser(user),
+      user: this.sanitizeUser(user as never),
       organizations: memberships.map((m) => ({
         id: m.organization.id,
         name: m.organization.name,
@@ -352,4 +361,67 @@ export class AuthService {
 
     return `${base}-${Date.now().toString(36)}`;
   }
+
+  /**
+   * Entrada pelo login único do grupo (TunerID).
+   *
+   * A divisão que sustenta isto: o TunerID responde QUEM é a pessoa; o que ela
+   * pode fazer aqui continua sendo decisão do Conversas. Papel, organização e
+   * canais são os daqui. Se o TunerID mandasse a permissão junto, trocar alguém
+   * de empresa lá mexeria no acesso de todos os sistemas sem ninguém pedir.
+   *
+   * Por isso também NÃO criamos usuário automaticamente: ter login no grupo não
+   * é o mesmo que ter lugar nesta caixa de entrada. Quem entra aqui é quem
+   * alguém daqui cadastrou.
+   */
+  async loginPorTunerId(codigo: string) {
+    const base = this.config.get<string>('TUNERID_API_URL');
+    const segredo = this.config.get<string>('SSO_CONVERSAS_SECRET');
+    if (!base || !segredo) {
+      this.logger.error('Login único pedido, mas TUNERID_API_URL/SSO_CONVERSAS_SECRET não estão configurados');
+      throw new ForbiddenException('Login único não está configurado neste ambiente');
+    }
+
+    let identidade: { id: string; name: string; email: string } | null = null;
+    try {
+      const r = await fetch(`${base.replace(/\/$/, '')}/sso/trocar`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-sso-app': 'conversas',
+          'x-sso-secret': segredo,
+        },
+        body: JSON.stringify({ codigo }),
+        // O bilhete vale 60 segundos: esperar mais que isso é esperar por nada.
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!r.ok) {
+        throw new UnauthorizedException('Código de entrada inválido ou vencido. Tente entrar de novo.');
+      }
+      identidade = (await r.json()) as { id: string; name: string; email: string };
+    } catch (e) {
+      if (e instanceof UnauthorizedException) throw e;
+      this.logger.error(`Falha ao falar com o TunerID: ${(e as Error).message}`);
+      throw new ForbiddenException('Não consegui confirmar o seu login com o TunerID. Tente de novo.');
+    }
+
+    const email = identidade.email?.toLowerCase().trim();
+    if (!email) throw new UnauthorizedException('O TunerID não devolveu um e-mail');
+
+    const user = await this.prisma.user.findUnique({ where: { email } });
+    if (!user) {
+      // Mensagem específica de propósito: a pessoa digitou certo, o problema é
+      // que ela não existe AQUI. Dizer "credenciais inválidas" mandaria ela
+      // tentar a senha de novo para sempre.
+      throw new ForbiddenException(
+        `Você entrou no TunerID como ${email}, mas esse e-mail não tem conta no Conversas. ` +
+        'Peça para quem administra o Conversas te cadastrar com esse mesmo e-mail.',
+      );
+    }
+    if (!user.isActive) throw new UnauthorizedException('Account is deactivated');
+
+    this.logger.log(`User logged in via TunerID: ${user.email}`);
+    return this.montarSessao(user);
+  }
+
 }

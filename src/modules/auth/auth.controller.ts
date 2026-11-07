@@ -4,6 +4,7 @@ import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { RefreshDto } from './dto/refresh.dto';
+import { SsoTunerIdDto } from './dto/sso-tunerid.dto';
 import { JwtAuthGuard } from '../../common/guards';
 import { CurrentUser } from '../../common/decorators';
 
@@ -22,6 +23,12 @@ export class AuthController {
   @ApiOperation({ summary: 'Login with email/password' })
   login(@Body() dto: LoginDto) {
     return this.authService.login(dto);
+  }
+
+  @Post('sso/tunerid')
+  @ApiOperation({ summary: 'Entra com o login único do grupo (bilhete do TunerID)' })
+  ssoTunerId(@Body() dto: SsoTunerIdDto) {
+    return this.authService.loginPorTunerId(dto.codigo);
   }
 
   @Post('refresh')
