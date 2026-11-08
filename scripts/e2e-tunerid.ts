@@ -111,6 +111,14 @@ function conexao(data: Record<string, unknown>) {
 async function main() {
   await new Promise<void>((ok) => intermediario.listen(3499, ok));
   const app = await NestFactory.createApplicationContext(ModuloDeTeste, { logger: ['error', 'warn'] });
+  // O .env de OUTRO sistema exportado no shell vence o .env daqui (variável já
+  // definida não é sobrescrita) — e aí este teste escreveria no banco errado.
+  if (!/\/chat_bullq(\?|$)/.test(process.env.DATABASE_URL ?? '')) {
+    console.error(`Recusado: DATABASE_URL não é o banco do Conversas (${(process.env.DATABASE_URL ?? '').replace(/:[^:@/]+@/, ':***@')}).`);
+    await app.close();
+    intermediario.close();
+    process.exit(1);
+  }
   const prisma = app.get(PrismaService);
   const auth = app.get(AuthService);
   const tunerid = app.get(TuneridService);
