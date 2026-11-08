@@ -10,9 +10,12 @@ import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import type { SignOptions } from 'jsonwebtoken';
 import * as bcrypt from 'bcrypt';
+import { randomBytes } from 'node:crypto';
+import { OrgRole } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
+import { TuneridService, type IdentidadeTunerId, type Via } from '../tunerid/tunerid.service';
 
 const BCRYPT_ROUNDS = 12;
 
@@ -24,6 +27,7 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
+    private readonly tunerid: TuneridService,
   ) {}
 
   async register(dto: RegisterDto) {
@@ -42,6 +46,15 @@ export class AuthService {
     if (!dto.inviteToken && process.env.ALLOW_OPEN_SIGNUP !== 'true') {
       throw new ForbiddenException(
         'Cadastro aberto está desabilitado. Solicite um convite ao administrador.',
+      );
+    }
+
+    // Fora da transição, contas nascem pelo TunerID. Convite aceito aqui
+    // criaria uma conta com senha local — uma porta lateral ao centro de acesso.
+    if (!this.tunerid.senhaLiberadaPara(dto.email)) {
+      throw new ForbiddenException(
+        'Contas do Conversas nascem pelo TunerID: peça para liberarem o Conversas na sua ficha. ' +
+          'A conta é criada sozinha no primeiro acesso.',
       );
     }
 
@@ -112,7 +125,7 @@ export class AuthService {
       return { user, organization };
     });
 
-    const tokens = await this.generateTokens(result.user.id, result.user.email);
+    const tokens = await this.generateTokens(result.user.id, result.user.email, 'senha');
     this.logger.log(`User registered (new workspace): ${result.user.email}`);
 
     return {
@@ -200,7 +213,7 @@ export class AuthService {
       return { user, organization: invitation.organization };
     });
 
-    const tokens = await this.generateTokens(result.user.id, result.user.email);
+    const tokens = await this.generateTokens(result.user.id, result.user.email, 'senha');
     this.logger.log(`User registered via invitation: ${result.user.email} -> org ${result.organization.name}`);
 
     return {
@@ -223,6 +236,12 @@ export class AuthService {
   }
 
   async login(dto: LoginDto) {
+    // A entrada normal é pelo TunerID. A senha daqui é da conta de emergência
+    // (e de todo mundo só durante a transição). Recusar ANTES de conferir a
+    // senha: quem não pode entrar por aqui não ganha um lugar para testar senha.
+    if (!this.tunerid.senhaLiberadaPara(dto.email)) {
+      throw new ForbiddenException('Neste sistema a entrada é pelo TunerID. Use o botão "Entrar com TunerID".');
+    }
     const user = await this.prisma.user.findUnique({
       where: { email: dto.email },
     });
@@ -241,7 +260,7 @@ export class AuthService {
     }
 
     this.logger.log(`User logged in: ${user.email}`);
-    return this.montarSessao(user);
+    return this.montarSessao(user, 'senha');
   }
 
   /**
@@ -250,7 +269,7 @@ export class AuthService {
    * cópias disto é garantir que um dia elas divergem, e aí uma das portas
    * passa a devolver permissão diferente da outra.
    */
-  private async montarSessao(user: { id: string; email: string } & Record<string, any>) {
+  private async montarSessao(user: { id: string; email: string } & Record<string, any>, via: Via) {
     const memberships = await this.prisma.userOrganization.findMany({
       where: { userId: user.id },
       include: {
@@ -259,7 +278,7 @@ export class AuthService {
       },
     });
 
-    const tokens = await this.generateTokens(user.id, user.email);
+    const tokens = await this.generateTokens(user.id, user.email, via);
 
     return {
       user: this.sanitizeUser(user as never),
@@ -278,24 +297,35 @@ export class AuthService {
     };
   }
 
+  /**
+   * Renova a sessão. É a porta que mais importa no Conversas: o token dura 15
+   * minutos e o de renovação, 7 dias — sem perguntar ao TunerID AQUI, quem foi
+   * cortado continuaria renovando a sessão por uma semana.
+   */
   async refresh(refreshToken: string) {
+    let payload: { sub: string; via?: Via };
     try {
-      const payload = this.jwt.verify<{ sub: string }>(refreshToken, {
+      payload = this.jwt.verify<{ sub: string; via?: Via }>(refreshToken, {
         secret: this.config.get<string>('JWT_REFRESH_SECRET'),
       });
-
-      const user = await this.prisma.user.findUnique({
-        where: { id: payload.sub },
-      });
-
-      if (!user || !user.isActive) {
-        throw new UnauthorizedException('Invalid refresh token');
-      }
-
-      return this.generateTokens(user.id, user.email);
     } catch {
       throw new UnauthorizedException('Invalid refresh token');
     }
+
+    const user = await this.prisma.user.findUnique({ where: { id: payload.sub } });
+    if (!user || !user.isActive) {
+      throw new UnauthorizedException('Invalid refresh token');
+    }
+
+    if (this.tunerid.exigeTunerId(user.email, payload.via)) {
+      // 503 do TunerID fora do ar sobe como está: não é "token inválido", e o
+      // front não deve deslogar a pessoa por causa disso.
+      const { identidade, fresca } = await this.tunerid.verificar(user.email);
+      if (!identidade) throw new UnauthorizedException('Seu acesso ao Conversas foi encerrado no TunerID.');
+      if (fresca) await this.sincronizar(identidade);
+    }
+
+    return this.generateTokens(user.id, user.email, payload.via ?? 'senha');
   }
 
   async getMe(userId: string) {
@@ -329,8 +359,9 @@ export class AuthService {
     };
   }
 
-  private async generateTokens(userId: string, email: string) {
-    const payload = { sub: userId, email };
+  /** `via` vai nos dois tokens: é como a revalidação sabe, na transição, se a sessão precisa do TunerID. */
+  private async generateTokens(userId: string, email: string, via: Via) {
+    const payload = { sub: userId, email, via };
 
     const [accessToken, refreshToken] = await Promise.all([
       this.jwt.signAsync(payload, {
@@ -365,63 +396,95 @@ export class AuthService {
   /**
    * Entrada pelo login único do grupo (TunerID).
    *
-   * A divisão que sustenta isto: o TunerID responde QUEM é a pessoa; o que ela
-   * pode fazer aqui continua sendo decisão do Conversas. Papel, organização e
-   * canais são os daqui. Se o TunerID mandasse a permissão junto, trocar alguém
-   * de empresa lá mexeria no acesso de todos os sistemas sem ninguém pedir.
-   *
-   * Por isso também NÃO criamos usuário automaticamente: ter login no grupo não
-   * é o mesmo que ter lugar nesta caixa de entrada. Quem entra aqui é quem
-   * alguém daqui cadastrou.
+   * O TunerID é quem decide: só emite o bilhete para quem tem o Conversas
+   * liberado e diz em quais empresas, com qual papel. A conta daqui NASCE neste
+   * momento se ainda não existir, e se já existir é ajustada ao que o TunerID
+   * mandou. Os CANAIS que cada atendente enxerga continuam sendo decididos aqui.
    */
   async loginPorTunerId(codigo: string) {
-    const base = this.config.get<string>('TUNERID_API_URL');
-    const segredo = this.config.get<string>('SSO_CONVERSAS_SECRET');
-    if (!base || !segredo) {
-      this.logger.error('Login único pedido, mas TUNERID_API_URL/SSO_CONVERSAS_SECRET não estão configurados');
-      throw new ForbiddenException('Login único não está configurado neste ambiente');
-    }
-
-    let identidade: { id: string; name: string; email: string } | null = null;
-    try {
-      const r = await fetch(`${base.replace(/\/$/, '')}/sso/trocar`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-sso-app': 'conversas',
-          'x-sso-secret': segredo,
-        },
-        body: JSON.stringify({ codigo }),
-        // O bilhete vale 60 segundos: esperar mais que isso é esperar por nada.
-        signal: AbortSignal.timeout(10_000),
-      });
-      if (!r.ok) {
-        throw new UnauthorizedException('Código de entrada inválido ou vencido. Tente entrar de novo.');
-      }
-      identidade = (await r.json()) as { id: string; name: string; email: string };
-    } catch (e) {
-      if (e instanceof UnauthorizedException) throw e;
-      this.logger.error(`Falha ao falar com o TunerID: ${(e as Error).message}`);
-      throw new ForbiddenException('Não consegui confirmar o seu login com o TunerID. Tente de novo.');
-    }
-
-    const email = identidade.email?.toLowerCase().trim();
-    if (!email) throw new UnauthorizedException('O TunerID não devolveu um e-mail');
-
-    const user = await this.prisma.user.findUnique({ where: { email } });
-    if (!user) {
-      // Mensagem específica de propósito: a pessoa digitou certo, o problema é
-      // que ela não existe AQUI. Dizer "credenciais inválidas" mandaria ela
-      // tentar a senha de novo para sempre.
-      throw new ForbiddenException(
-        `Você entrou no TunerID como ${email}, mas esse e-mail não tem conta no Conversas. ` +
-        'Peça para quem administra o Conversas te cadastrar com esse mesmo e-mail.',
-      );
-    }
+    const identidade = await this.tunerid.trocar(codigo);
+    const user = await this.sincronizar(identidade);
     if (!user.isActive) throw new UnauthorizedException('Account is deactivated');
-
     this.logger.log(`User logged in via TunerID: ${user.email}`);
-    return this.montarSessao(user);
+    return this.montarSessao(user, 'tunerid');
   }
 
+  /**
+   * Põe a conta daqui de acordo com o TunerID: cria, reativa, ajusta nome,
+   * empresas e papéis. Empresa que o TunerID não liberou SAI (e com ela os
+   * canais e departamentos do atendente naquela empresa — cascata do banco).
+   * Empresa que continua com o mesmo papel fica intocada: os canais liberados
+   * aqui para o atendente são preservados.
+   */
+  async sincronizar(identidade: IdentidadeTunerId) {
+    const empresas = await this.prisma.organization.findMany({
+      where: { deletedAt: null },
+      select: { id: true, slug: true },
+    });
+    const desejado = new Map<string, OrgRole>();
+    for (const e of identidade.acesso.empresas) {
+      const daqui = this.tunerid.empresaDaqui(e.slug, empresas);
+      if (!daqui || !(Object.values(OrgRole) as string[]).includes(e.perfil)) {
+        this.logger.warn(
+          `TunerID liberou ${identidade.email} em "${e.slug}" como ${e.perfil}, ` +
+            (daqui ? 'mas esse papel não existe aqui.' : 'mas essa empresa não existe aqui (confira TUNERID_EMPRESAS).'),
+        );
+        continue;
+      }
+      desejado.set(daqui.id, e.perfil as OrgRole);
+    }
+    if (desejado.size === 0) {
+      throw new ForbiddenException('O TunerID liberou o Conversas, mas para uma empresa que ele não conhece.');
+    }
+
+    const email = identidade.email.toLowerCase().trim();
+    // E-mail aqui pode ter sido gravado com maiúscula: procura sem ligar para isso,
+    // senão a conta antiga da pessoa ficaria órfã e nasceria uma segunda.
+    const existente = await this.prisma.user.findFirst({
+      where: { email: { equals: email, mode: 'insensitive' } },
+      include: { organizations: true },
+    });
+
+    const igual =
+      existente &&
+      existente.isActive &&
+      !existente.deletedAt &&
+      existente.name === identidade.name &&
+      existente.organizations.length === desejado.size &&
+      existente.organizations.every((m) => desejado.get(m.organizationId) === m.role);
+
+    if (!igual) {
+      await this.prisma.$transaction(async (tx) => {
+        const user = existente
+          ? await tx.user.update({
+              where: { id: existente.id },
+              data: { name: identidade.name, isActive: true, deletedAt: null },
+            })
+          : await tx.user.create({
+              data: {
+                name: identidade.name,
+                email,
+                // Senha impossível: ninguém sabe, ninguém usa. A entrada é pelo TunerID.
+                password: await bcrypt.hash(randomBytes(32).toString('base64url'), BCRYPT_ROUNDS),
+              },
+            });
+        await tx.userOrganization.deleteMany({
+          where: { userId: user.id, organizationId: { notIn: [...desejado.keys()] } },
+        });
+        for (const [organizationId, role] of desejado) {
+          await tx.userOrganization.upsert({
+            where: { userId_organizationId: { userId: user.id, organizationId } },
+            create: { userId: user.id, organizationId, role },
+            update: { role },
+          });
+        }
+      });
+      this.logger.log(
+        `${existente ? 'Conta ajustada' : 'Conta criada'} pelo TunerID: ${email} → ` +
+          [...desejado].map(([o, r]) => `${o}:${r}`).join(', '),
+      );
+    }
+
+    return this.prisma.user.findFirstOrThrow({ where: { email: { equals: email, mode: 'insensitive' } } });
+  }
 }

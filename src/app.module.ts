@@ -3,6 +3,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { BullModule } from '@nestjs/bullmq';
 import { PrismaModule } from './database/prisma.module';
 import { AuthModule } from './modules/auth/auth.module';
+import { TuneridModule } from './modules/tunerid/tunerid.module';
 import { UsersModule } from './modules/users/users.module';
 import { OrganizationsModule } from './modules/organizations/organizations.module';
 import { ChannelHubModule } from './modules/channel-hub/channel-hub.module';
@@ -49,6 +50,7 @@ import redisConfig from './config/redis.config';
     // module can inject OutboxService without explicit imports.
     AutomationsModule,
     ChannelAccessModule,
+    TuneridModule,
     AuthModule,
     UsersModule,
     OrganizationsModule,

@@ -13,6 +13,7 @@ import { UpdateOrganizationDto } from './dto/update-organization.dto';
 import { InviteMemberDto } from './dto/invite-member.dto';
 import { UpdateMemberRoleDto } from './dto/update-member-role.dto';
 import { UpdateMemberDto } from './dto/update-member.dto';
+import { TuneridService } from '../tunerid/tunerid.service';
 
 const BCRYPT_ROUNDS = 12;
 
@@ -20,7 +21,33 @@ const BCRYPT_ROUNDS = 12;
 export class OrganizationsService {
   private readonly logger = new Logger(OrganizationsService.name);
 
-  constructor(private readonly repository: OrganizationsRepository) {}
+  constructor(
+    private readonly repository: OrganizationsRepository,
+    private readonly tunerid: TuneridService,
+  ) {}
+
+  /**
+   * Conta que o TunerID governa: quem entra, em quais empresas, com qual papel,
+   * ativa ou não. Fora da transição, só a conta de emergência é gerida aqui.
+   * Os CANAIS de cada atendente continuam sendo daqui.
+   */
+  private geridaPeloTunerId(email: string) {
+    return !this.tunerid.gestaoLocalLiberada() && !this.tunerid.contaDeEmergencia(email);
+  }
+
+  /**
+   * Recebe SEMPRE o userId da participação já encontrada — nunca o id que veio
+   * da tela. A tela manda o id da participação, o repositório aceita os dois, e
+   * procurar usuário com id de participação não acha ninguém: a trava passaria
+   * em branco.
+   */
+  private async exigirGestaoLocal(userId: string, oQue: string) {
+    const user = await this.repository.findUserById(userId);
+    if (!user) throw new NotFoundException('Usuário não encontrado');
+    if (user && this.geridaPeloTunerId(user.email)) {
+      throw new ForbiddenException(`${oQue} de ${user.name} é decidido no TunerID, na ficha da pessoa. Aqui ficam os canais.`);
+    }
+  }
 
   async getOrganization(orgId: string) {
     const org = await this.repository.findById(orgId);
@@ -60,10 +87,18 @@ export class OrganizationsService {
   }
 
   async getMembers(orgId: string) {
-    return this.repository.findMembers(orgId);
+    const membros = await this.repository.findMembers(orgId);
+    // A tela usa isto para travar o que é decidido no TunerID.
+    return membros.map((m) => ({ ...m, geridoPeloTunerId: this.geridaPeloTunerId(m.user.email) }));
   }
 
   async inviteMember(orgId: string, dto: InviteMemberDto, inviterId: string) {
+    if (this.geridaPeloTunerId(dto.email)) {
+      throw new ForbiddenException(
+        'Contas do Conversas nascem pelo TunerID: libere o Conversas na ficha da pessoa, aba Acessos, ' +
+          'escolhendo a empresa e o papel. A conta é criada sozinha no primeiro acesso.',
+      );
+    }
     // Check if user already exists and is already a member
     const existingUser = await this.repository.findUserByEmail(dto.email);
     if (existingUser) {
@@ -131,6 +166,7 @@ export class OrganizationsService {
     if (membership.role === 'OWNER' && dto.role !== 'OWNER') {
       throw new ForbiddenException('Cannot change the role of the organization owner');
     }
+    await this.exigirGestaoLocal(membership.userId, 'O papel');
 
     if (actorRole === 'ADMIN' && dto.role === 'OWNER') {
       throw new ForbiddenException('Only owners can assign the owner role');
@@ -148,6 +184,7 @@ export class OrganizationsService {
     if (membership.role === 'OWNER') {
       throw new ForbiddenException('Cannot remove the organization owner');
     }
+    await this.exigirGestaoLocal(membership.userId, 'Tirar o acesso');
 
     if (memberId === actorId) {
       throw new BadRequestException('Cannot remove yourself. Transfer ownership first.');
@@ -170,6 +207,9 @@ export class OrganizationsService {
     }
     if (membership.role === 'OWNER' && actorRole === 'ADMIN') {
       throw new ForbiddenException('Only the owner can edit the owner');
+    }
+    if (dto.name !== undefined || dto.isActive !== undefined) {
+      await this.exigirGestaoLocal(membership.userId, 'Nome e ativo/inativo');
     }
 
     const data: Prisma.UserUpdateInput = {};
@@ -203,6 +243,7 @@ export class OrganizationsService {
     if (membership.role === 'OWNER' && actorRole === 'ADMIN') {
       throw new ForbiddenException('Only the owner can reset the owner password');
     }
+    await this.exigirGestaoLocal(membership.userId, 'A senha');
 
     const hashedPassword = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
     await this.repository.updateUser(membership.userId, { password: hashedPassword });

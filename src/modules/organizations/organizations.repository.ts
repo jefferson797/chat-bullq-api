@@ -78,6 +78,10 @@ export class OrganizationsRepository {
     return this.prisma.user.update({ where: { id: userId }, data });
   }
 
+  async findUserById(id: string) {
+    return this.prisma.user.findUnique({ where: { id }, select: { id: true, name: true, email: true } });
+  }
+
   async findUserByEmail(email: string) {
     return this.prisma.user.findUnique({ where: { email } });
   }

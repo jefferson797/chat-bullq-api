@@ -4,10 +4,13 @@ import { ConfigService } from '@nestjs/config';
 import type { SignOptions } from 'jsonwebtoken';
 import { RealtimeGateway } from './realtime.gateway';
 import { PresenceService } from './presence.service';
+import { AuthModule } from '../auth/auth.module';
 
 @Global()
 @Module({
   imports: [
+    // A reconferência da conexão ao vivo ajusta a conta pelo TunerID.
+    AuthModule,
     JwtModule.registerAsync({
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({

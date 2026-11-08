@@ -7,7 +7,7 @@ import {
   ConnectedSocket,
   MessageBody,
 } from '@nestjs/websockets';
-import { Logger } from '@nestjs/common';
+import { Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { Server, Socket } from 'socket.io';
@@ -15,13 +15,15 @@ import { OrgRole } from '@prisma/client';
 import { PresenceService } from './presence.service';
 import { PrismaService } from '../../database/prisma.service';
 import { ChannelAccessService } from '../iam/channel-access/channel-access.service';
+import { TuneridService } from '../tunerid/tunerid.service';
+import { AuthService } from '../auth/auth.service';
 
 @WebSocketGateway({
   cors: { origin: '*', credentials: true },
   namespace: '/',
 })
 export class RealtimeGateway
-  implements OnGatewayConnection, OnGatewayDisconnect
+  implements OnGatewayConnection, OnGatewayDisconnect, OnModuleInit, OnModuleDestroy
 {
   @WebSocketServer()
   server: Server;
@@ -34,7 +36,99 @@ export class RealtimeGateway
     private readonly presence: PresenceService,
     private readonly prisma: PrismaService,
     private readonly channelAccess: ChannelAccessService,
+    private readonly tunerid: TuneridService,
+    private readonly auth: AuthService,
   ) {}
+
+  private reconferencia?: NodeJS.Timeout;
+
+  /**
+   * A conexão ao vivo é conferida de novo a cada minuto.
+   *
+   * Antes ela só era conferida ao CONECTAR: quem fosse desativado (aqui, ou
+   * cortado no TunerID) continuava recebendo as mensagens dos clientes pela
+   * aba aberta, indefinidamente. Para "cortar com um clique" valer, a conexão
+   * que já estava aberta também precisa cair.
+   */
+  onModuleInit() {
+    this.reconferencia = setInterval(() => {
+      this.reconferir().catch((e) => this.logger.warn(`Reconferência falhou: ${(e as Error).message}`));
+    }, 60_000);
+    this.reconferencia.unref();
+  }
+
+  onModuleDestroy() {
+    if (this.reconferencia) clearInterval(this.reconferencia);
+  }
+
+  /** Derruba avisando o motivo: o front renova o token e reconecta, ou desloga. */
+  private derrubar(sockets: { emit: (ev: string, d: unknown) => void; disconnect: (close?: boolean) => void }[], reason: string) {
+    for (const s of sockets) {
+      s.emit('auth:error', { reason });
+      s.disconnect(true);
+    }
+  }
+
+  /**
+   * Para cada pessoa conectada: a conta segue ativa? O TunerID ainda deixa
+   * entrar? O papel, a empresa e os canais são os mesmos de quando conectou?
+   *
+   * - cortada / desativada → cai, e o front (sem conseguir renovar) desloga;
+   * - papel, empresa ou canais mudaram → cai, e o front reconecta já com as
+   *   salas certas. Sem isso, quem perdeu um canal seguiria ouvindo ele.
+   */
+  private async reconferir() {
+    const conectados = await this.server.fetchSockets();
+    const porPessoa = new Map<string, typeof conectados>();
+    for (const s of conectados) {
+      const id = s.data?.userId as string | undefined;
+      if (!id) continue;
+      porPessoa.set(id, [...(porPessoa.get(id) ?? []), s]);
+    }
+
+    for (const [userId, sockets] of porPessoa) {
+      const user = await this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { email: true, isActive: true, deletedAt: true },
+      });
+      if (!user || !user.isActive || user.deletedAt) {
+        this.derrubar(sockets, 'conta-inativa');
+        continue;
+      }
+      if (this.tunerid.exigeTunerId(user.email, sockets[0].data.via)) {
+        try {
+          const { identidade, fresca } = await this.tunerid.verificar(user.email);
+          if (!identidade) {
+            this.logger.log(`Acesso encerrado no TunerID: derrubando ${sockets.length} conexão(ões) de ${user.email}`);
+            this.derrubar(sockets, 'acesso-encerrado');
+            continue;
+          }
+          if (fresca) await this.auth.sincronizar(identidade);
+        } catch {
+          // TunerID fora além da tolerância: não dá para saber quem é. Mesma
+          // regra das requisições — não segue sem saber.
+          this.derrubar(sockets, 'tunerid-fora');
+          continue;
+        }
+      }
+
+      for (const s of sockets) {
+        const orgId = s.data.organizationId as string | undefined;
+        if (!orgId) continue;
+        const membership = await this.prisma.userOrganization.findUnique({
+          where: { userId_organizationId: { userId, organizationId: orgId } },
+          select: { id: true, role: true },
+        });
+        if (!membership || membership.role !== s.data.role) {
+          this.derrubar([s], 'acesso-mudou');
+          continue;
+        }
+        const canais = await this.resolveChannelRoomsForMembership(orgId, membership.id, membership.role);
+        const antes = [...((s.data.channelIds as string[] | undefined) ?? [])].sort().join(',');
+        if (antes !== [...canais].sort().join(',')) this.derrubar([s], 'acesso-mudou');
+      }
+    }
+  }
 
   async handleConnection(client: Socket) {
     try {
@@ -51,8 +145,28 @@ export class RealtimeGateway
         secret: this.configService.get<string>('JWT_SECRET'),
       });
 
+      // Conta ativa E liberada no TunerID, não só token com assinatura válida.
+      const conta = await this.prisma.user.findUnique({
+        where: { id: payload.sub },
+        select: { email: true, isActive: true, deletedAt: true },
+      });
+      if (!conta || !conta.isActive || conta.deletedAt) {
+        client.emit('auth:error', { reason: 'conta-inativa' });
+        client.disconnect();
+        return;
+      }
+      if (this.tunerid.exigeTunerId(conta.email, payload.via)) {
+        const { identidade } = await this.tunerid.verificar(conta.email);
+        if (!identidade) {
+          client.emit('auth:error', { reason: 'acesso-encerrado' });
+          client.disconnect();
+          return;
+        }
+      }
+
       client.data.userId = payload.sub;
       client.data.email = payload.email;
+      client.data.via = payload.via;
       client.join(`user:${payload.sub}`);
 
       const orgId = client.handshake.auth?.organizationId;

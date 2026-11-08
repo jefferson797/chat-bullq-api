@@ -5,13 +5,31 @@ import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { RefreshDto } from './dto/refresh.dto';
 import { SsoTunerIdDto } from './dto/sso-tunerid.dto';
+import { TuneridService } from '../tunerid/tunerid.service';
 import { JwtAuthGuard } from '../../common/guards';
 import { CurrentUser } from '../../common/decorators';
 
 @ApiTags('Auth')
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(
+    private readonly authService: AuthService,
+    private readonly tunerid: TuneridService,
+  ) {}
+
+  /**
+   * Como se entra aqui — a tela de login se monta com isto. Público de
+   * propósito: diz só se a senha local está aberta a todos (transição) ou só à
+   * emergência, e se o login único está configurado. Nenhum nome de conta.
+   */
+  @Get('modo')
+  @ApiOperation({ summary: 'Como se entra neste sistema (TunerID e/ou senha)' })
+  modo() {
+    return {
+      tunerid: this.tunerid.configurado(),
+      senha: this.tunerid.gestaoLocalLiberada() ? 'todos' : 'emergencia',
+    };
+  }
 
   @Post('register')
   @ApiOperation({ summary: 'Register new user + organization' })
